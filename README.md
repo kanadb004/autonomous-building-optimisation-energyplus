@@ -1,4 +1,4 @@
-# Honeywell Campus Connect: Autonomous Building Optimization
+# Autonomous Building Optimization
 
 An autonomous Building Management System. EnergyPlus simulates a building,
 an open-source LLM served by Ollama makes HVAC setpoint decisions through an
