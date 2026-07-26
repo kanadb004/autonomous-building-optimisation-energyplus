@@ -14,6 +14,8 @@ __pycache__/
 runs/*
 !runs/demo_final/
 !runs/demo_final/**
+!runs/demo_video/
+!runs/demo_video/**
 eplusout.*
 eplustbl.*
 eplusmtr.*
