@@ -298,3 +298,17 @@
   reference model's *electricity* demand alone (fan + DX compressor
   ancillary use) -- gas dominates the heating-season total, and the model
   is a small reference building, not a full commercial campus.
+
+## 2026-07-26 — GC-5 launch
+
+- **Extended-horizon run launched from commit `b3c8eedc42d53be63826f719dcbce35b11076e1e`**
+  (main, `feat(scripts): extended-horizon reliability run script (GC-5.1)`,
+  PR #19, squash-merged) -- GC-5.2's committed-state requirement. Working
+  tree was clean at launch; `config/default.yaml` and branch untouched for
+  the run's duration per the prime directive. `scripts/run_extended.sh`
+  patches `models/building.idf` to Jan 1-31, runs the no-LLM baseline, then
+  the AI run via `agent_runner --period-days 31` in structured mode (native
+  mode explicitly not used) at the config decision interval (60 sim-min,
+  ~744 decisions, 3.5-5.4h wall-clock estimate). Launched in a separate
+  Terminal.app process so it survives this session ending; output tees to
+  `runs/demo_final/extended_january/agent_runner_report.log`.
