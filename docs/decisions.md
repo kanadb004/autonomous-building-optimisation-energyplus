@@ -312,3 +312,48 @@
   ~744 decisions, 3.5-5.4h wall-clock estimate). Launched in a separate
   Terminal.app process so it survives this session ending; output tees to
   `runs/demo_final/extended_january/agent_runner_report.log`.
+
+## 2026-07-26 — GC-5 partial-run stop
+
+- **Stopped deliberately, not a crash**, at user request, to free the GC-4b
+  slot for a parallel session per the plan's execution order (GC-4a ->
+  extended run -> GC-6 -> GC-4b). Sent `SIGINT` to the `agent_runner`
+  process (not `SIGKILL`) so its `async with` MCP session/subprocess
+  context managers unwound cleanly on the way out; both `agent_runner` and
+  the `mcp_server` subprocess exited within seconds, confirmed via `ps`.
+  Telemetry and decision logs flush per-row/per-decision (§0.2 ground
+  truth), so nothing in-flight was lost -- this matches the plan's own
+  §2 GC-5 "Failure handling" contingency (flushed data survives a mid-run
+  stop, commit what completed with an honest note, never rerun at the
+  cost of downstream phases' time), applied here to a deliberate stop
+  rather than a crash.
+- **Coverage at stop:** baseline completed the full January period
+  (2976 zone-timesteps, no LLM). AI covered `1986-01-01T00:15` through
+  `1986-01-08T06:45` -- 172 decisions, **0 fallbacks/alerts** (confirmed
+  both via `decisions.jsonl` and the `ALERT` grep count on the run log),
+  ~23% of the ~746-decision target. Zero crashes, zero handshake timeouts,
+  zero Ollama-unavailable/malformed-output fallbacks across the entire
+  covered window -- this is the reliability evidence GC-5 exists to
+  produce, just over ~7.3 days instead of the full 31.
+- **`regenerate_summaries.py` ran clean** (`scripts/regenerate_summaries.py`
+  already handled the baseline+ai-only, no-rulebased case per GC-5.3 -- no
+  code change was needed there): 0 changed/0 regressed on the two existing
+  committed periods (`january_week`, `july_week`), and a fresh
+  `extended_january/summary.json` was generated.
+- **Known caveat, called out honestly (§9 honesty rule):**
+  `summary.json`'s `comparison.ai_vs_baseline` block compares a full-month
+  baseline against the ~7.3-day AI partial -- the ~73% "energy
+  saved"/"carbon avoided" figures it produces are an artifact of that
+  period-length mismatch, not a real savings result, and must not be
+  cited as such. A `PARTIAL_RUN_NOTE.md` was added directly in
+  `runs/demo_final/extended_january/` flagging this for anyone browsing
+  the run directory without reading this log. No code change was made to
+  `regenerate_summaries.py`/`metrics.py` to special-case this (would need
+  a matched-period baseline slice, which isn't worth building for a
+  now-superseded partial run).
+- **Not re-run in this session** -- per the plan's own guidance ("never
+  rerun at the cost of downstream phases' time"), GC-4b runs next in a
+  parallel session instead. Whether GC-5 is re-launched later to complete
+  the full 31 days is a call for a later session, not decided here;
+  `config/default.yaml` and `scripts/run_extended.sh` are unchanged, so a
+  re-run needs no design change, just time.
