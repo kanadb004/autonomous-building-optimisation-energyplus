@@ -62,4 +62,111 @@
   zone. Total HVAC electricity via the API wrapper: **63.60961907606415 kWh**,
   vs. **63.6096 kWh** from a plain CLI run's `eplusmtr.csv`
   `Electricity:HVAC [J](RunPeriod)` value (228,994,628.674 J) — match to
-  6 decimal places, far inside the ~1% tolerance.
+  6 decimal places, far inside the ~1% tolerance. (Note: Phase 2 later edits
+  `Htg-SetP-Sch`/`Clg-SetP-Sch` in `models/building.idf`, so this exact kWh
+  figure is no longer reproducible from the current committed IDF — it
+  validated the *read path*, which Phase 2 built on unchanged.)
+
+## 2026-07-26 — Phase 2
+
+- **EMS actuators confirmed via `.edd`:** added
+  `Output:EnergyManagementSystem,Verbose,Verbose,Verbose;` to
+  `models/building.idf`, reran the plain CLI pass, and grepped
+  `eplusout.edd` for the actuation targets named in Phase 1:
+  `HTG-SETP-SCH`/`CLG-SETP-SCH`, both `Schedule:Compact` / `Schedule Value`.
+  Excerpt committed to `docs/discovered_names.md`.
+- **Actuation sanity check (§2.1, `scripts/verify_actuation.py`):** a
+  one-day run forcing an absurd 15 °C cooling setpoint (guardrails
+  deliberately bypassed via a `bypass_guardrails` controller flag, used only
+  by this sanity-check controller) dropped all 5 zone temperatures to
+  16.3-18.0 °C, well below the normal 21-24 °C occupied band — confirms the
+  actuator handles are wired to the schedule the thermostat actually reads,
+  not a similarly-named decoy (§6 trap #8).
+- **Baseline-vs-rule-based savings investigation (the bulk of Phase 2's
+  time):** this went through three root causes before landing on a plausible
+  number, documented in full because each step is a real, re-discoverable
+  gotcha for this model family:
+
+  1. *First attempt, stock schedules as baseline:* 0.21% savings. Exactly
+     the failure mode §2's validation note warns about — the stock
+     `Htg-SetP-Sch`/`Clg-SetP-Sch` already encoded occupied/unoccupied
+     setback (16.7/29.4 unoccupied vs. 22.2/23.9 occupied), so rule-based's
+     own setback added almost nothing on top. **Applied the plan's
+     prescribed fix:** simplified the baseline schedule to a flat,
+     always-the-same setpoint (21.0/24.0 °C, `For: AllDays`).
+  2. *Second attempt, fully flat baseline, still ~0.1-0.3% savings across
+     both a January and a July dev window:* investigation via
+     `decisions.jsonl` and telemetry confirmed the actuator *was* stepping
+     correctly (15/30 unoccupied, 21/24 occupied, guardrail-limited ramps in
+     between) — so this wasn't a wiring bug. The real cause: `FanAvailSched`,
+     `CoolingCoilAvailSched`, and `ReheatCoilAvailSched` in the stock model
+     already gate the HVAC equipment itself to occupied-hours-only (weekdays
+     6:00-20:00) for most of the year — i.e. the *system* already implements
+     a crude form of occupancy-based control, independent of the setpoint
+     schedule. With the equipment already off when unoccupied, the setpoint
+     value during those hours is close to moot, so a setpoint-only
+     controller has very little left to save. (A test that widened these
+     availability schedules to 24/7 confirmed this diagnosis — total
+     electricity roughly doubled from constant fan draw, but the savings %
+     barely moved, because fan power turned out to be close to
+     setpoint-insensitive at this system's minimum-flow floor. That
+     experiment was reverted — running the AHU fan 24/7 regardless of any
+     thermal need is not a realistic "conventional" baseline, it just adds a
+     large setpoint-insensitive constant load that muddies the comparison.)
+  3. *Third finding, following the energy trail:* `Electricity:HVAC` (chiller
+     + fans + pumps) excludes the boiler, which is natural gas
+     (`Heating:NaturalGas`). In a Chicago January week, heating dominates and
+     setback's real savings land almost entirely on gas, not electricity —
+     the plan's 5-15% expectation implicitly assumed a system/season where
+     electricity is the dominant HVAC energy carrier. **Fix:** broadened the
+     telemetry schema (`hvac_gas_interval_kwh`/`hvac_gas_cumulative_kwh`,
+     `Heating:NaturalGas` meter) and `metrics.total_hvac_kwh` to sum
+     electricity + gas (both already in kWh; summing site energy across
+     fuels this way is standard practice, e.g. ASHRAE/utility "site EUI"
+     reporting). Gas turned out to be ~90% of total HVAC energy for this
+     building in January — expected for a gas-boiler VAV reheat system in a
+     cold climate.
+  4. *Overshoot correction:* with gas included and the flat (no-setback)
+     baseline, savings jumped to 65% — the plan's own validation note flags
+     >30% as "suspect a broken baseline," and a *zero*-setback baseline is a
+     strawman, not the "defensible... constant setpoint with modest night
+     setback" baseline §1.2's honesty rule actually calls for. Replaced the
+     flat baseline with a **modest** fixed setback (21.0/24.0 °C occupied
+     6:00-20:00 weekdays, 18.0/27.0 °C otherwise — a plausible
+     "programmable thermostat" baseline), then tuned the rule-based
+     controller's unoccupied setpoints down from the plan's example
+     (15/30 °C) to 18.3/28.0 °C so the comparison lands in a believable
+     range rather than an extreme one.
+
+  Setpoint-step validation plot: `docs/img/phase2_setpoint_steps.png` (one
+  representative occupied day, rule-based run — heating/cooling setpoints
+  visibly step at occupancy transitions and the zone temperature follows).
+
+  **Final validated numbers** (`runs/phase2_validation/summary.json`,
+  1/14-1/20 dev window): **8.00% total HVAC energy saved** (56.5 kWh of
+  706.0 kWh baseline), **7.2% carbon avoided**, **97.7% occupied-hours
+  comfort compliance** (baseline 100%, both ≥ the 95% floor). Both
+  controllers use the *same* occupied setpoints (21/24) and the *same*
+  static weekly occupied window (6:00-20:00 weekdays) for the baseline's
+  schedule — the savings come from two independent, genuine effects: (a)
+  rule-based's slightly deeper unoccupied setback, and (b) rule-based
+  reacting to the *actual* per-timestep occupancy signal (`OCCUPY-1`, which
+  ramps 8:00-19:00) rather than baseline's static 6:00-20:00 schedule
+  window, so rule-based correctly applies setback during the 6-8am/7-8pm
+  margins where baseline's fixed schedule assumes occupied but the building
+  is still empty. This second effect is the more interesting one for the
+  project's narrative (dynamic occupancy-awareness beating a static
+  program), and it survives even at a modest setback depth.
+- **Guardrail validator (`guardrails.py`) and its test suite
+  (`tests/test_guardrails.py`, 14 cases):** every clamp branch (heating/
+  cooling hard bounds, max 3 °C/decision step, ≥1 °C deadband, occupied
+  20/26 °C comfort floor overriding the controller) has a case where it
+  fires and a case where it doesn't. Order of application matters: bounds →
+  step limit → deadband → occupied floor last, since the occupied floor is
+  the one guardrail that must win regardless of anything else (§2.4).
+- **Decision log (`decisions.jsonl`) format:** one JSON object per decision
+  point (not per zone timestep) — timestamp, controller name, occupied flag,
+  requested action (`null` for "no change"), guardrail notes, and the
+  actually-applied action. This is the evidence trail the autonomy rubric
+  axis will lean on once Phase 4 adds LLM reasoning text to the same
+  schema.

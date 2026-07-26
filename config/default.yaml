@@ -1,3 +1,47 @@
-# Placeholder — populated in later phases (run period, decision interval,
-# comfort band, guardrail bounds, emission-factor profile, model paths, run mode).
+# Default run configuration (§2 Phase 2, §3 repo structure). Values here are
+# read by src/abms/orchestrator.py; guardrail bounds are also hardcoded as
+# constants in guardrails.py (single source of truth -- this file documents
+# them for humans, not a second place code reads them from, to avoid drift).
+
+building_idf: models/building.idf
+weather_file: models/weather/USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw
+
+# Decision-interval gating (§2.3): controllers are consulted only every N
+# simulation minutes, not every zone timestep (4 timesteps/hour = 15 sim-min
+# in this model, per Timestep,4; in building.idf).
+decision_interval_minutes:
+  rulebased: 15
+  llm: 60
+
+# Rule-based controller setpoints (°C) -- occupancy-based setback (§2.2).
+# Deeper than the baseline's fixed weekly setback schedule (18.0/27.0
+# unoccupied, models/building.idf), and driven by real per-timestep
+# occupancy rather than a static 6:00-20:00 window -- the actual occupancy
+# schedule (OCCUPY-1) runs ~8:00-19:00, so this also avoids the baseline's
+# wasted conditioning during the 6-8am/7-8pm margins where the static
+# schedule assumes occupied but the building is empty (§2.5 validation).
+rulebased_controller:
+  occupied_heat_c: 21.0
+  occupied_cool_c: 24.0
+  unoccupied_heat_c: 18.3
+  unoccupied_cool_c: 28.0
+
+# Guardrail bounds (§2.4) -- mirrored as constants in guardrails.py.
+guardrails:
+  heating_min_c: 12.0
+  heating_max_c: 23.0
+  cooling_min_c: 22.0
+  cooling_max_c: 32.0
+  min_deadband_c: 1.0
+  max_step_c: 3.0
+  occupied_heat_floor_c: 20.0
+  occupied_cool_ceiling_c: 26.0
+
+# Comfort compliance band used by metrics.py for the "occupied-hours comfort
+# compliance %" figure -- intentionally the same numbers as the guardrail
+# occupied floor/ceiling, since that floor *is* the comfort promise.
+comfort_band:
+  occupied_heat_min_c: 20.0
+  occupied_cool_max_c: 26.0
+
 run_mode: baseline

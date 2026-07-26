@@ -17,12 +17,12 @@ Checked off per commit. One GitHub Issue per phase also exists (§10.3).
 - [x] 1.5 Telemetry logger
 
 ## Phase 2 — Actuation, baseline vs controlled, rule-based controller
-- [ ] 2.1 Actuator acquisition
-- [ ] 2.2 Controller interface
-- [ ] 2.3 Decision-interval gating
-- [ ] 2.4 Guardrail validator
-- [ ] 2.5 Run orchestrator + metrics
-- [ ] 2.6 Decision log
+- [x] 2.1 Actuator acquisition
+- [x] 2.2 Controller interface
+- [x] 2.3 Decision-interval gating
+- [x] 2.4 Guardrail validator
+- [x] 2.5 Run orchestrator + metrics
+- [x] 2.6 Decision log
 
 ## Phase 3 — MCP server
 - [ ] 3.1 Shared state store

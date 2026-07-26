@@ -20,6 +20,13 @@ FIELDNAMES = (
         "cooling_setpoint_c",
         "hvac_electricity_interval_kwh",
         "hvac_electricity_cumulative_kwh",
+        # Phase 2 addition: the boiler's natural-gas meter. During a
+        # heating-dominated week, setback savings land almost entirely on
+        # gas (reheat coil energy), not electricity -- see docs/decisions.md
+        # "Phase 2 energy-metric broadening". Electricity:HVAC alone made
+        # setback look like it saved ~0%.
+        "hvac_gas_interval_kwh",
+        "hvac_gas_cumulative_kwh",
     ]
 )
 
