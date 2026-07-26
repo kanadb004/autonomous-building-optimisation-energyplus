@@ -10,11 +10,11 @@ Checked off per commit. One GitHub Issue per phase also exists (§10.3).
 - [x] 0.5 Install remaining Python deps + freeze
 
 ## Phase 1 — Python API harness: read live state from a running simulation
-- [ ] 1.1 Choose and prepare the building model
-- [ ] 1.2 Simulation wrapper class
-- [ ] 1.3 Variable/meter handle acquisition
-- [ ] 1.4 Warmup/sizing filtering + timestep bookkeeping
-- [ ] 1.5 Telemetry logger
+- [x] 1.1 Choose and prepare the building model
+- [x] 1.2 Simulation wrapper class
+- [x] 1.3 Variable/meter handle acquisition
+- [x] 1.4 Warmup/sizing filtering + timestep bookkeeping
+- [x] 1.5 Telemetry logger
 
 ## Phase 2 — Actuation, baseline vs controlled, rule-based controller
 - [ ] 2.1 Actuator acquisition
