@@ -11,8 +11,12 @@ from datetime import datetime
 from pathlib import Path
 
 from abms.carbon import gas_kwh_to_kg_co2, kwh_to_kg_co2
+from abms.comfort import pmv_for_zone
 from abms.guardrails import OCCUPIED_COOL_CEILING_C, OCCUPIED_HEAT_FLOOR_C
 from abms.telemetry import ZONE_NAMES
+
+# ASHRAE 55 comfort criterion for PMV (GC-3.2): |PMV| <= this is "within".
+PMV_COMFORT_THRESHOLD = 0.5
 
 # Fallback interval length (sim-minutes) when fewer than two rows are
 # available to derive it from -- matches this model's Timestep,4 (15
@@ -96,6 +100,38 @@ def comfort_compliance_pct(rows: list) -> float:
     return 100.0 * compliant_count / occupied_count
 
 
+def pmv_stats(rows: list) -> dict:
+    """PMV mean, mean-absolute, and ASHRAE-55 within-band % over occupied
+    zone-timesteps only (same occupancy condition `comfort_compliance_pct`
+    uses). PMV is computed on the fly from zone temp + the timestamp's
+    month via `abms.comfort` -- additive alongside the existing
+    temperature-band metric, which is unchanged."""
+    occupied_count = 0
+    pmv_sum = 0.0
+    pmv_abs_sum = 0.0
+    within_count = 0
+    for r in rows:
+        month = int(r["timestamp"][5:7])
+        for zone in ZONE_NAMES:
+            occupants = float(r[f"zone_occupant_count_{zone}"])
+            if occupants <= 0:
+                continue
+            occupied_count += 1
+            temp = float(r[f"zone_temp_c_{zone}"])
+            value = pmv_for_zone(temp, month)
+            pmv_sum += value
+            pmv_abs_sum += abs(value)
+            if abs(value) <= PMV_COMFORT_THRESHOLD:
+                within_count += 1
+    if occupied_count == 0:
+        return {"pmv_mean": 0.0, "pmv_mean_abs": 0.0, "pmv_within_pct": 100.0}
+    return {
+        "pmv_mean": pmv_sum / occupied_count,
+        "pmv_mean_abs": pmv_abs_sum / occupied_count,
+        "pmv_within_pct": 100.0 * within_count / occupied_count,
+    }
+
+
 def peak_demand_kw(rows: list, interval_min: float | None = None) -> tuple:
     """(peak interval-average electricity kW, timestamp of that peak) over
     `rows`. Returns (0.0, None) for an empty run."""
@@ -135,6 +171,7 @@ def summarize_run(run_dir, peak_demand_kw_threshold: float | None = None) -> dic
         "zone_timesteps": len(rows),
         "peak_demand_kw": peak_kw,
         "peak_demand_at": peak_at,
+        **pmv_stats(rows),
     }
     if peak_demand_kw_threshold is not None:
         summary["pct_intervals_above_threshold"] = pct_intervals_above_threshold(
@@ -174,6 +211,7 @@ def _comparison(baseline: dict, controlled: dict) -> dict:
         "comfort_compliance_delta_pct": controlled["comfort_compliance_pct"] - baseline["comfort_compliance_pct"],
         "peak_demand_reduction_kw": peak_demand_reduction_kw,
         "peak_demand_reduction_pct": peak_demand_reduction_pct,
+        "pmv_within_delta_pct": controlled["pmv_within_pct"] - baseline["pmv_within_pct"],
     }
 
 

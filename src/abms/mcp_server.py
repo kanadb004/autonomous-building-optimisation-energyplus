@@ -28,6 +28,7 @@ config.ensure_pyenergyplus_on_path()
 
 from abms import guardrails, metrics  # noqa: E402
 from abms.carbon import intensity_for_hour  # noqa: E402
+from abms.comfort import pmv_for_zone  # noqa: E402
 from abms.controllers.mcp_bridge import MCPBridgeController  # noqa: E402
 from abms.controllers.rulebased import RuleBasedController  # noqa: E402
 from abms.datastore import SharedState  # noqa: E402
@@ -54,20 +55,27 @@ def build_server(
 
     @mcp.tool()
     def get_building_state() -> dict:
-        """Current snapshot of the building: per-zone air temperature (C) and
-        occupant count, outdoor drybulb temperature (C), current heating and
-        cooling setpoints (C), current HVAC power (interval energy, kWh, and
-        the equivalent average kW -- `current_demand_kw` -- compare this
-        against `get_goals_and_constraints`'s peak-demand threshold),
-        simulation datetime, and whether a decision is currently awaited
+        """Current snapshot of the building: per-zone air temperature (C),
+        occupant count, and PMV thermal comfort index (Fanger PMV, target
+        |PMV| <= 0.5 per `get_goals_and_constraints` -- computed from air
+        temp and the simulation month using fixed assumptions for the
+        inputs telemetry doesn't carry: MRT = air temp, RH 50%, air
+        velocity 0.1 m/s, 1.1 met, clothing by season), outdoor drybulb
+        temperature (C), current heating and cooling setpoints (C), current
+        HVAC power (interval energy, kWh, and the equivalent average kW --
+        `current_demand_kw` -- compare this against
+        `get_goals_and_constraints`'s peak-demand threshold), simulation
+        datetime, and whether a decision is currently awaited
         (`awaiting_decision`). Call this first, every decision cycle."""
         latest = datastore.latest()
         if latest is None:
             return {"error": "No simulation state recorded yet."}
+        month = int(latest["timestamp"][5:7])
         zones = {
             z: {
                 "temp_c": latest[f"zone_temp_c_{z}"],
                 "occupant_count": latest[f"zone_occupant_count_{z}"],
+                "pmv": pmv_for_zone(latest[f"zone_temp_c_{z}"], month),
             }
             for z in ZONE_NAMES
         }
@@ -130,7 +138,8 @@ def build_server(
         """The controller's objectives and hard limits. Comfort is a
         constraint (must hold during occupied hours); energy, carbon, and
         peak demand are objectives to minimize/respect. Includes the
-        occupied-hours comfort band, the actuator bounds and
+        occupied-hours comfort band and PMV target (|PMV| <= 0.5, per
+        `get_building_state`'s per-zone `pmv`), the actuator bounds and
         max-step-per-decision guardrails that will clamp any request you
         make, the peak-demand threshold (compare against
         `get_building_state`'s `current_demand_kw`), the decision cadence,
@@ -155,6 +164,10 @@ def build_server(
             "occupied_comfort_band_c": {
                 "heat_floor": guardrails.OCCUPIED_HEAT_FLOOR_C,
                 "cool_ceiling": guardrails.OCCUPIED_COOL_CEILING_C,
+            },
+            "pmv_target": {
+                "abs_max": metrics.PMV_COMFORT_THRESHOLD,
+                "guidance": "keep each occupied zone's |PMV| at or below this (ASHRAE 55's comfort criterion)",
             },
             "guardrail_bounds_c": {
                 "heating_min": guardrails.HEATING_MIN_C,
