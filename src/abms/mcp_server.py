@@ -40,7 +40,12 @@ DEFAULT_IDF = REPO_ROOT / "models" / "building.idf"
 DEFAULT_EPW = REPO_ROOT / "models" / "weather" / "USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw"
 
 
-def build_server(datastore: SharedState, handshake: DecisionHandshake, decision_interval_minutes: int) -> FastMCP:
+def build_server(
+    datastore: SharedState,
+    handshake: DecisionHandshake,
+    decision_interval_minutes: int,
+    peak_demand_kw_threshold: float | None = None,
+) -> FastMCP:
     """Constructs the FastMCP app with all five tools bound to `datastore`
     and `handshake`. Separated from `main()` so tests can build a server
     against hand-fed datastore/handshake objects without spinning up
@@ -51,7 +56,9 @@ def build_server(datastore: SharedState, handshake: DecisionHandshake, decision_
     def get_building_state() -> dict:
         """Current snapshot of the building: per-zone air temperature (C) and
         occupant count, outdoor drybulb temperature (C), current heating and
-        cooling setpoints (C), current HVAC power (interval energy, kWh),
+        cooling setpoints (C), current HVAC power (interval energy, kWh, and
+        the equivalent average kW -- `current_demand_kw` -- compare this
+        against `get_goals_and_constraints`'s peak-demand threshold),
         simulation datetime, and whether a decision is currently awaited
         (`awaiting_decision`). Call this first, every decision cycle."""
         latest = datastore.latest()
@@ -65,6 +72,8 @@ def build_server(datastore: SharedState, handshake: DecisionHandshake, decision_
             for z in ZONE_NAMES
         }
         total_occupants = sum(z["occupant_count"] for z in zones.values())
+        history_rows = datastore.history()
+        interval_min = metrics.interval_minutes(history_rows) if history_rows else metrics.DEFAULT_INTERVAL_MINUTES
         return {
             "sim_datetime": latest["timestamp"],
             "outdoor_temp_c": latest["outdoor_temp_c"],
@@ -77,6 +86,9 @@ def build_server(datastore: SharedState, handshake: DecisionHandshake, decision_
             "current_power": {
                 "hvac_electricity_interval_kwh": latest["hvac_electricity_interval_kwh"],
                 "hvac_gas_interval_kwh": latest["hvac_gas_interval_kwh"],
+                "current_demand_kw": metrics.interval_kwh_to_kw(
+                    latest["hvac_electricity_interval_kwh"], interval_min
+                ),
             },
             "awaiting_decision": handshake.awaiting_decision,
         }
@@ -116,12 +128,14 @@ def build_server(datastore: SharedState, handshake: DecisionHandshake, decision_
     @mcp.tool()
     def get_goals_and_constraints() -> dict:
         """The controller's objectives and hard limits. Comfort is a
-        constraint (must hold during occupied hours); energy and carbon are
-        objectives to minimize. Includes the occupied-hours comfort band,
-        the actuator bounds and max-step-per-decision guardrails that will
-        clamp any request you make, the decision cadence, and the current
-        plus next-6h carbon intensity forecast (kg CO2/kWh) so shifting load
-        to clean hours is a visible, reasoned option."""
+        constraint (must hold during occupied hours); energy, carbon, and
+        peak demand are objectives to minimize/respect. Includes the
+        occupied-hours comfort band, the actuator bounds and
+        max-step-per-decision guardrails that will clamp any request you
+        make, the peak-demand threshold (compare against
+        `get_building_state`'s `current_demand_kw`), the decision cadence,
+        and the current plus next-6h carbon intensity forecast (kg CO2/kWh)
+        so shifting load to clean hours is a visible, reasoned option."""
         latest = datastore.latest()
         current_hour = int(latest["timestamp"][11:13]) if latest else 0
         forecast = [
@@ -132,6 +146,11 @@ def build_server(datastore: SharedState, handshake: DecisionHandshake, decision_
                 "comfort": "constraint -- must hold during occupied hours",
                 "energy": "objective -- minimize HVAC electricity + gas",
                 "carbon": "objective -- minimize kg CO2; prefer shifting load to low-intensity hours",
+                "peak_demand": {
+                    "threshold_kw": peak_demand_kw_threshold,
+                    "guidance": "keep instantaneous HVAC demand below this; pre-conditioning earlier "
+                    "is preferable to peak-hour catch-up",
+                },
             },
             "occupied_comfort_band_c": {
                 "heat_floor": guardrails.OCCUPIED_HEAT_FLOOR_C,
@@ -239,7 +258,8 @@ def main(argv=None) -> int:
     )
     runner.start()
 
-    mcp = build_server(datastore, handshake, args.decision_interval_minutes)
+    peak_demand_kw_threshold = config.load().get("peak_demand_kw_threshold")
+    mcp = build_server(datastore, handshake, args.decision_interval_minutes, peak_demand_kw_threshold)
     try:
         mcp.run(transport="stdio")
     finally:
