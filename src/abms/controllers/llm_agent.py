@@ -35,15 +35,47 @@ def load_system_prompt() -> str:
     return SYSTEM_PROMPT_PATH.read_text()
 
 
-def build_user_prompt(state: dict, goals: dict, history: dict) -> str:
+def render_feedback_block(previous_feedback: dict | None) -> str:
+    """Renders the guardrail-feedback self-correction block (GC-4a, plan
+    §2): the previous cycle's `write_result` (requested/applied/
+    guardrail_notes) turned into a short block telling the model what
+    happened last time, so it can adapt. Returns "" when there is no
+    previous decision (first decision of a session)."""
+    if previous_feedback is None:
+        return ""
+    requested = previous_feedback.get("requested")
+    applied = previous_feedback.get("applied") or {}
+    notes = previous_feedback.get("guardrail_notes") or []
+    if requested and (
+        requested.get("heating_c") != applied.get("heating_c")
+        or requested.get("cooling_c") != applied.get("cooling_c")
+        or notes
+    ):
+        return (
+            "Your previous decision was adjusted by the safety layer; account for this.\n"
+            f"You requested: heating={requested.get('heating_c')} cooling={requested.get('cooling_c')}\n"
+            f"What was applied: heating={applied.get('heating_c')} cooling={applied.get('cooling_c')}\n"
+            f"Why: {'; '.join(notes) if notes else 'guardrail adjustment'}\n"
+        )
+    return (
+        f"Your previous decision (heating={applied.get('heating_c')} "
+        f"cooling={applied.get('cooling_c')}) was applied unmodified -- no safety-layer adjustment needed.\n"
+    )
+
+
+def build_user_prompt(state: dict, goals: dict, history: dict, previous_feedback: dict | None = None) -> str:
     """Packs the three MCP read-tool responses into one compact JSON blob
-    for the model (§4.1: "the runner...packs the state into the prompt")."""
+    for the model (§4.1: "the runner...packs the state into the prompt"),
+    preceded by the guardrail-feedback self-correction block (GC-4a) when
+    a previous decision exists."""
     payload = {
         "current_state": state,
         "goals_and_constraints": goals,
         "recent_history": history,
     }
+    feedback_block = render_feedback_block(previous_feedback)
     return (
+        f"{feedback_block}"
         "Decide the next heating and cooling setpoints (deg C) for this "
         "building, given the following data.\n\n"
         f"{json.dumps(payload, indent=2)}\n\n"
@@ -81,15 +113,20 @@ class LLMAgent:
         self._client = ollama.Client(host=host, timeout=request_timeout_s)
         self._system_prompt = load_system_prompt()
 
-    def propose(self, state: dict, goals: dict, history: dict) -> Decision:
+    def propose(
+        self, state: dict, goals: dict, history: dict, previous_feedback: dict | None = None
+    ) -> Decision:
         """Returns a validated `Decision`. Raises `OllamaUnavailableError`
         if the model can't be reached at all, or `DecisionParseError` if
         every reply (original call + repair retries) was malformed --
         callers treat both as "use the fallback for this decision" but may
-        want to log them differently (§4.4)."""
+        want to log them differently (§4.4). `previous_feedback` is the
+        prior cycle's `write_result` (requested/applied/guardrail_notes),
+        or None on the first decision of a session -- it drives the
+        guardrail-feedback self-correction block (GC-4a)."""
         messages = [
             {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": build_user_prompt(state, goals, history)},
+            {"role": "user", "content": build_user_prompt(state, goals, history, previous_feedback)},
         ]
         last_error = None
         for _ in range(self.max_repair_retries + 1):

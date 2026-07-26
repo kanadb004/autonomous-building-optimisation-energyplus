@@ -106,6 +106,7 @@ async def run_agent_session(
     fallback_decisions = 0
     last_sim_datetime = None
     last_progress_at = time.monotonic()
+    previous_feedback = None
 
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
@@ -134,7 +135,7 @@ async def run_agent_session(
                 source = "llm"
                 fallback_reason = None
                 try:
-                    decision = llm_agent.propose(state, goals, history)
+                    decision = llm_agent.propose(state, goals, history, previous_feedback=previous_feedback)
                     heating_c, cooling_c, reasoning = decision.heating_c, decision.cooling_c, decision.reasoning
                 except OllamaUnavailableError as e:
                     source, fallback_reason = "fallback-ollama-unavailable", str(e)
@@ -156,6 +157,7 @@ async def run_agent_session(
                 )
                 decisions_made += 1
                 last_progress_at = time.monotonic()
+                previous_feedback = write_result
 
                 applied = write_result.get("applied") or {}
                 _log(
