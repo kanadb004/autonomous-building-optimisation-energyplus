@@ -1932,18 +1932,16 @@
     Htg-SetP-Sch,            !- Name
     Temperature,             !- Schedule Type Limits Name
     Through: 12/31,          !- Field 1
-    For: SummerDesignDay,    !- Field 2
-    Until: 24:00,16.7,       !- Field 3
-    For: WinterDesignDay,    !- Field 5
-    Until: 24:00,22.2,       !- Field 6
-    For: WeekDays,           !- Field 8
-    Until: 6:00,16.7,        !- Field 9
-    Until: 20:00,22.2,       !- Field 11
-    Until: 24:00,16.7,       !- Field 13
-    For: WeekEnds Holiday,   !- Field 15
-    Until: 24:00,16.7,       !- Field 16
-    For: AllOtherDays,       !- Field 18
-    Until: 24:00,16.7;       !- Field 19
+    For: WinterDesignDay,    !- Field 2
+    Until: 24:00,21.0,       !- Field 3
+    For: SummerDesignDay,    !- Field 5
+    Until: 24:00,18.0,       !- Field 6
+    For: Weekdays,           !- Field 8
+    Until: 6:00,18.0,        !- Field 9
+    Until: 20:00,21.0,       !- Field 11
+    Until: 24:00,18.0,       !- Field 13
+    For: AllOtherDays,       !- Field 15
+    Until: 24:00,18.0;       !- Field 16
 
   Schedule:Compact,
     PlenumHtg-SetP-Sch,      !- Name
@@ -1956,18 +1954,16 @@
     Clg-SetP-Sch,            !- Name
     Temperature,             !- Schedule Type Limits Name
     Through: 12/31,          !- Field 1
-    For: SummerDesignDay,    !- Field 2
-    Until: 24:00,23.9,       !- Field 3
-    For: WinterDesignDay,    !- Field 5
-    Until: 24:00,29.4,       !- Field 6
-    For: WeekDays,           !- Field 8
-    Until: 6:00,29.4,        !- Field 9
-    Until: 20:00,23.9,       !- Field 11
-    Until: 24:00,29.4,       !- Field 13
-    For: WeekEnds Holiday,   !- Field 15
-    Until: 24:00,29.4,       !- Field 16
-    For: AllOtherDays,       !- Field 18
-    Until: 24:00,29.4;       !- Field 19
+    For: WinterDesignDay,    !- Field 2
+    Until: 24:00,27.0,       !- Field 3
+    For: SummerDesignDay,    !- Field 5
+    Until: 24:00,24.0,       !- Field 6
+    For: Weekdays,           !- Field 8
+    Until: 6:00,27.0,        !- Field 9
+    Until: 20:00,24.0,       !- Field 11
+    Until: 24:00,27.0,       !- Field 13
+    For: AllOtherDays,       !- Field 15
+    Until: 24:00,27.0;       !- Field 16
 
   Schedule:Compact,
     PlenumClg-SetP-Sch,      !- Name
@@ -3538,4 +3534,9 @@
   Output:Surfaces:List,DecayCurvesFromComponentLoadsSummary;
 
   Output:Surfaces:List,ViewFactorInfo;
+
+  Output:EnergyManagementSystem,
+    Verbose,                 !- Actuator Availability Dictionary Reporting
+    Verbose,                 !- Internal Variable Availability Dictionary Reporting
+    Verbose;                 !- EMS Runtime Language Debug Output Level
 

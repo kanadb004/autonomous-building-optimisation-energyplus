@@ -1,15 +1,18 @@
 """EnergyPlus wrapper: dedicated thread, callbacks, variable/meter handles,
-warmup/sizing filtering (§2 Phase 1, §6 loop mechanics traps #1-#3).
+actuators, warmup/sizing filtering (§2 Phases 1-2, §6 loop mechanics).
 
 The E+ API call blocks until simulation end, so it runs on a dedicated
 thread; callbacks registered with the runtime execute on that thread.
 """
 
+import json
 import threading
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from abms import guardrails
+from abms.controllers.baseline import BaselineController
 from abms.telemetry import FIELDNAMES, ZONE_NAMES, TelemetryLogger  # noqa: F401 (FIELDNAMES re-exported for callers)
 
 # KindOfSim value for an actual weather-file run period (as opposed to a
@@ -22,6 +25,10 @@ KIND_OF_SIM_RUN_PERIOD_WEATHER = 3
 HEATING_SETPOINT_SCHEDULE = "Htg-SetP-Sch"
 COOLING_SETPOINT_SCHEDULE = "Clg-SetP-Sch"
 HVAC_ELECTRICITY_METER = "Electricity:HVAC"
+# Boiler natural-gas meter (§ Phase 2 energy-metric broadening, docs/decisions.md):
+# in a heating-dominated week, setback savings land on gas (reheat coil), not
+# electricity -- Electricity:HVAC alone made setback look like ~0% savings.
+HVAC_GAS_METER = "Heating:NaturalGas"
 
 
 def normalize_timestamp(year: int, month: int, day: int, hour: int, minutes: int) -> datetime:
@@ -41,25 +48,49 @@ class SimulationRunner:
 
     `on_state`, if given, is called with each telemetry record dict from the
     simulation thread -- callers must not block or raise.
+
+    `controller`, if given, is consulted every `decision_interval_minutes`
+    of simulation time (§2.3); its decisions pass through `guardrails.validate`
+    and are written to the heating/cooling setpoint-schedule actuators
+    (§2.1). Defaults to `BaselineController` (no actuation at all -- schedules
+    run exactly as authored). Every decision is appended to
+    `<output_dir>/decisions.jsonl` (§2.6).
     """
 
-    def __init__(self, idf_path, epw_path, output_dir, run_id, mode="baseline", on_state=None):
+    def __init__(
+        self,
+        idf_path,
+        epw_path,
+        output_dir,
+        run_id,
+        mode="baseline",
+        on_state=None,
+        controller=None,
+        decision_interval_minutes=15,
+    ):
         self.idf_path = Path(idf_path)
         self.epw_path = Path(epw_path)
         self.output_dir = Path(output_dir)
         self.run_id = run_id
         self.mode = mode
         self.on_state = on_state
+        self.controller = controller if controller is not None else BaselineController()
+        self.decision_interval = timedelta(minutes=decision_interval_minutes)
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._error_log_path = self.output_dir / "callback_errors.log"
         self.telemetry = TelemetryLogger(self.output_dir / "telemetry.csv")
+        self._decision_log_file = open(self.output_dir / "decisions.jsonl", "w")
 
         self.api = None
         self.state = None
         self._thread = None
         self._handles = None
         self._cumulative_hvac_kwh = 0.0
+        self._cumulative_hvac_gas_kwh = 0.0
+        self._last_decision_time = None
+        self._applied_heating_c = None
+        self._applied_cooling_c = None
         self.fatal_error = None
         self.exit_code = None
 
@@ -93,6 +124,7 @@ class SimulationRunner:
         )
         self.api.state_manager.delete_state(self.state)
         self.telemetry.close()
+        self._decision_log_file.close()
 
     # -- callbacks (run on the simulation thread; every body is wrapped) --
 
@@ -145,6 +177,25 @@ class SimulationRunner:
             raise RuntimeError(f"Invalid meter handle: name={HVAC_ELECTRICITY_METER!r}")
         handles["hvac_meter"] = meter_handle
 
+        gas_meter_handle = self.api.exchange.get_meter_handle(state, HVAC_GAS_METER)
+        if gas_meter_handle == -1:
+            raise RuntimeError(f"Invalid meter handle: name={HVAC_GAS_METER!r}")
+        handles["hvac_gas_meter"] = gas_meter_handle
+
+        if self.controller.actuates:
+
+            def get_actuator(component_type, control_type, key):
+                handle = self.api.exchange.get_actuator_handle(state, component_type, control_type, key)
+                if handle == -1:
+                    raise RuntimeError(
+                        f"Invalid actuator handle: component_type={component_type!r} "
+                        f"control_type={control_type!r} key={key!r}"
+                    )
+                return handle
+
+            handles["heating_actuator"] = get_actuator("Schedule:Compact", "Schedule Value", HEATING_SETPOINT_SCHEDULE)
+            handles["cooling_actuator"] = get_actuator("Schedule:Compact", "Schedule Value", COOLING_SETPOINT_SCHEDULE)
+
         self._handles = handles
 
     def _record_state(self, state) -> None:
@@ -161,6 +212,9 @@ class SimulationRunner:
         interval_kwh = ex.get_meter_value(state, h["hvac_meter"]) / 3.6e6
         self._cumulative_hvac_kwh += interval_kwh
 
+        interval_gas_kwh = ex.get_meter_value(state, h["hvac_gas_meter"]) / 3.6e6
+        self._cumulative_hvac_gas_kwh += interval_gas_kwh
+
         record = {
             "timestamp": ts.isoformat(),
             "run_id": self.run_id,
@@ -170,6 +224,8 @@ class SimulationRunner:
             "cooling_setpoint_c": ex.get_variable_value(state, h["cooling_setpoint"]),
             "hvac_electricity_interval_kwh": interval_kwh,
             "hvac_electricity_cumulative_kwh": self._cumulative_hvac_kwh,
+            "hvac_gas_interval_kwh": interval_gas_kwh,
+            "hvac_gas_cumulative_kwh": self._cumulative_hvac_gas_kwh,
         }
         for zone in ZONE_NAMES:
             record[f"zone_temp_c_{zone}"] = ex.get_variable_value(state, h["zone_temp"][zone])
@@ -178,6 +234,74 @@ class SimulationRunner:
         self.telemetry.append(record)
         if self.on_state is not None:
             self.on_state(record)
+
+        if self.controller.actuates:
+            self._maybe_decide(state, ts, record)
+
+    def _maybe_decide(self, state, ts: datetime, record: dict) -> None:
+        """Decision-interval gating (§2.3): the controller is consulted only
+        every `decision_interval` of simulation time, not every zone
+        timestep -- cheap timesteps vastly outnumber decision timesteps."""
+        if self._last_decision_time is not None and ts - self._last_decision_time < self.decision_interval:
+            return
+        self._last_decision_time = ts
+
+        if self._applied_heating_c is None:
+            # First decision point: initialize "previous applied" from the
+            # schedule's own authored value so the max-step guardrail has a
+            # sane baseline instead of comparing against nothing.
+            self._applied_heating_c = record["heating_setpoint_c"]
+            self._applied_cooling_c = record["cooling_setpoint_c"]
+
+        total_occupants = sum(record[f"zone_occupant_count_{z}"] for z in ZONE_NAMES)
+        occupied = total_occupants > 0
+        snapshot = dict(record, occupied=occupied)
+
+        decision = self.controller.decide(snapshot)
+        if decision is None:
+            # "No change": explicitly re-write the last applied value rather
+            # than relying on the actuator to revert on its own -- it never
+            # does (§6 trap #9).
+            result = guardrails.GuardrailResult(
+                heating_c=self._applied_heating_c, cooling_c=self._applied_cooling_c, notes=[]
+            )
+        elif getattr(self.controller, "bypass_guardrails", False):
+            # Only for the §2.1 absurd-value actuation sanity check --
+            # writes the controller's raw request straight to the actuator,
+            # unclamped, to prove the actuator is wired to the schedule the
+            # thermostat actually reads. Never used by real controllers.
+            requested_heating_c, requested_cooling_c = decision
+            result = guardrails.GuardrailResult(heating_c=requested_heating_c, cooling_c=requested_cooling_c, notes=[])
+        else:
+            requested_heating_c, requested_cooling_c = decision
+            result = guardrails.validate(
+                requested_heating_c,
+                requested_cooling_c,
+                prev_heating_c=self._applied_heating_c,
+                prev_cooling_c=self._applied_cooling_c,
+                occupied=occupied,
+            )
+
+        ex = self.api.exchange
+        ex.set_actuator_value(state, self._handles["heating_actuator"], result.heating_c)
+        ex.set_actuator_value(state, self._handles["cooling_actuator"], result.cooling_c)
+        self._applied_heating_c = result.heating_c
+        self._applied_cooling_c = result.cooling_c
+
+        self._log_decision(ts, occupied, decision, result)
+
+    def _log_decision(self, ts: datetime, occupied: bool, decision, result) -> None:
+        entry = {
+            "timestamp": ts.isoformat(),
+            "run_id": self.run_id,
+            "controller": self.controller.name,
+            "occupied": occupied,
+            "requested": None if decision is None else {"heating_c": decision[0], "cooling_c": decision[1]},
+            "applied": {"heating_c": result.heating_c, "cooling_c": result.cooling_c},
+            "guardrail_notes": result.notes,
+        }
+        self._decision_log_file.write(json.dumps(entry) + "\n")
+        self._decision_log_file.flush()
 
     def _log_callback_exception(self, where: str) -> None:
         with open(self._error_log_path, "a") as f:
