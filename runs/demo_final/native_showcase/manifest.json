@@ -1,0 +1,6 @@
+{
+  "source_idf": "models/building.idf",
+  "source_idf_sha256": "b3900990d2951e8599150a26f74c73437b65477c208e4665fe33581b7f621415",
+  "patched_idf": "building.idf",
+  "note": "GC-4b native tool-calling showcase -- one simulated day (Jan 14, 24 decisions), not a savings comparison."
+}

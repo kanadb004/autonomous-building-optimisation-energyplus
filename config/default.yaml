@@ -71,6 +71,14 @@ llm_agent:
   keep_alive: "10m"
   max_repair_retries: 1
   history_hours: 6
+  # Decision mode (GC-4b, docs/GAP_CLOSURE_PLAN.md §2 Phase GC-4b). "structured"
+  # (default, production) is the mode validated across the whole demo and
+  # extended-run corpus: agent_runner prefetches state/goals/history and asks
+  # for one JSON decision. "native" lets the model drive its own MCP tool
+  # calls via Ollama's tools= parameter, bounded to a short showcase run only
+  # -- see docs/decisions.md for the GC-4b outcome. Default stays "structured";
+  # switch with --mode native or this key, never both disagreeing silently.
+  mode: structured
 
 # Demo run period(s) (§4.4): a wall-clock budget of ~5-10s/decision at a
 # 60 sim-minute decision interval means an annual AI run is hours of
