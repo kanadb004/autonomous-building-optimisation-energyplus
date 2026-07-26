@@ -72,7 +72,7 @@ def run_ai(
     `metrics.compare_three` can treat all three uniformly."""
     cfg = config.load()
     interval = decision_interval_minutes or cfg["decision_interval_minutes"]["llm"]
-    llm_agent, history_hours = agent_runner.build_llm_agent()
+    llm_agent, history_hours, _mode = agent_runner.build_llm_agent()
     max_decisions = agent_runner.expected_decision_count(period_days, interval) + 2
     run_dir = output_dir / "ai"
     asyncio.run(

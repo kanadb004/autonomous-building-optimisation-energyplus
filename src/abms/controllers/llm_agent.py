@@ -113,6 +113,17 @@ class LLMAgent:
         self._client = ollama.Client(host=host, timeout=request_timeout_s)
         self._system_prompt = load_system_prompt()
 
+    @property
+    def client(self) -> ollama.Client:
+        """Exposed so `agent_runner`'s native tool-calling mode (GC-4b) can
+        reuse the same configured Ollama client (model/host/timeout) for its
+        own `tools=` chat calls, instead of constructing a second one."""
+        return self._client
+
+    @property
+    def system_prompt(self) -> str:
+        return self._system_prompt
+
     def propose(
         self, state: dict, goals: dict, history: dict, previous_feedback: dict | None = None
     ) -> Decision:

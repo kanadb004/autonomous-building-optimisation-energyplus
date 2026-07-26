@@ -357,3 +357,72 @@
   the full 31 days is a call for a later session, not decided here;
   `config/default.yaml` and `scripts/run_extended.sh` are unchanged, so a
   re-run needs no design change, just time.
+
+## 2026-07-26 — GC-4b native tool-calling
+
+- **Prerequisites confirmed before starting:** GC-4a (PR #18), GC-5 (PR #22,
+  partial-honest-stop), GC-6 (PR #21) all merged to `main` -- per the plan's
+  §1 execution order and this phase's own explicit optional/stretch scope
+  (§7.6 priority order).
+- **First successful native tool-call round, well inside the 30-min
+  time-box:** a standalone probe against `qwen2.5:3b-instruct` via
+  `ollama.Client.chat(..., tools=[...])` returned a valid
+  `get_building_state` tool call in 8s, and a full two-round loop
+  (`get_building_state` -> `set_zone_setpoints`) completed in ~19s. The
+  time-box's actual condition -- does the tools-parameter path produce a
+  first successful tool-call round at all -- was cleared almost
+  immediately, so implementation proceeded per the plan's "if it works"
+  branch (mode switch, tool-list translation, bounded loop, three-layer
+  fallback, `--timeout-s 180`).
+- **A real harness bug found and fixed during the first native smoke test,
+  not a model failure:** `agent_runner._call`'s
+  `json.loads(result.content[0].text)` failed with `Expecting value: line 1
+  column 1 (char 0)` on `set_zone_setpoints` calls specifically. Diagnosed
+  by returning the raw `TextContent` on failure: FastMCP's pydantic
+  validation was correctly rejecting `heating_c=None, cooling_c=None`
+  (present keys, null values -- a real model-reliability issue, see below),
+  and the resulting error text wasn't the plain-JSON `_call` expected.
+  Fixed `_call` to prefer `result.structuredContent` when present (the
+  modern FastMCP path for dict-returning tools) and fall back to a
+  descriptive `RuntimeError` including the raw content otherwise, plus
+  tightened the pre-call argument check in `run_native_decision` to require
+  `heating_c`/`cooling_c` be actual numbers, not just present keys -- this
+  turns a confusing JSON-parse error into a clean, immediate
+  `NativeToolCallError` before the round-trip.
+- **Genuine model reliability issue, confirmed after the fix (not a
+  scaffolding bug):** `qwen2.5:3b-instruct` intermittently calls
+  `set_zone_setpoints` with `heating_c`/`cooling_c` explicitly `null`, or
+  with an empty arguments dict. Both are caught by the pre-call check and
+  fall through to structured mode for that decision, per the plan's
+  three-layer safety net (native -> structured -> rule-based) -- exactly
+  the failure mode §9's adversarial pass anticipated for a small model.
+- **Showcase run** (`runs/demo_final/native_showcase/`, one simulated day,
+  Jan 14, `--mode native --timeout-s 180`, decision interval 60 sim-min):
+  **24/24 decisions completed, zero crashes, zero rule-based fallbacks**
+  (the third safety net was never needed). Of the 24: **4 genuine
+  `llm-native` decisions** (the model drove its own tool-call sequence --
+  one example at `02:15` made 8 tool calls, including multiple read-tools,
+  before calling `set_zone_setpoints`) and **20
+  `structured-after-native-failure`** decisions (native attempted, failed
+  on a null/missing-argument call, fell through to the existing
+  structured-mode path, which itself never needed the rule-based
+  fallback). Native success rate (~17%) is honestly low for this 3B model
+  under the bounded harness -- consistent with the plan's own expectation
+  ("likely with a 7-8B model" per §7 failure mode 2) -- but the mechanism
+  itself, including all three fallback layers, is demonstrated working
+  end-to-end with real evidence in `decisions.jsonl`.
+- **Structured mode confirmed completely unaffected (prime directive):** a
+  2-sim-day structured-mode regression smoke run (the mandatory §6 gate for
+  any change touching `agent_runner.py`/`llm_agent.py`) completed with
+  47/47 decisions via the LLM, zero fallbacks, zero native-path invocation
+  -- `llm_agent.mode` defaults to `"structured"` in `config/default.yaml`,
+  and `orchestrator.run_ai` (the production `compare-ai`/`demo` path) never
+  passes `mode`, so it always gets the default. Native mode exists only
+  behind `--mode native` / the config key, exercised solely by this
+  showcase run.
+- **Outcome: native mode implemented and demonstrated working (not the
+  30-min-abandonment path).** Structured mode remains the production
+  configuration for all `demo`/`compare-ai`/extended runs -- native mode's
+  ~17% success rate on `qwen2.5:3b-instruct`, while real, is not reliable
+  enough to run unattended at scale, and the plan explicitly scopes native
+  mode to this one-day showcase only.
