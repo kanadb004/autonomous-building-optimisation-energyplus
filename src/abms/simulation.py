@@ -49,6 +49,12 @@ class SimulationRunner:
     `on_state`, if given, is called with each telemetry record dict from the
     simulation thread -- callers must not block or raise.
 
+    `on_decision`, if given, is called with each decision-log entry dict
+    (same shape as one `decisions.jsonl` line) right after it's applied to
+    the actuators and written to disk -- callers must not block or raise.
+    Used by the MCP server (§3) to deliver the guardrail-applied values back
+    to whichever `set_zone_setpoints` call is waiting on them.
+
     `controller`, if given, is consulted every `decision_interval_minutes`
     of simulation time (§2.3); its decisions pass through `guardrails.validate`
     and are written to the heating/cooling setpoint-schedule actuators
@@ -65,8 +71,10 @@ class SimulationRunner:
         run_id,
         mode="baseline",
         on_state=None,
+        on_decision=None,
         controller=None,
         decision_interval_minutes=15,
+        mute_console=False,
     ):
         self.idf_path = Path(idf_path)
         self.epw_path = Path(epw_path)
@@ -74,8 +82,13 @@ class SimulationRunner:
         self.run_id = run_id
         self.mode = mode
         self.on_state = on_state
+        self.on_decision = on_decision
         self.controller = controller if controller is not None else BaselineController()
         self.decision_interval = timedelta(minutes=decision_interval_minutes)
+        # MCP mode needs this: EnergyPlus prints progress lines straight to
+        # stdout/stderr, which corrupts the stdio JSON-RPC channel the MCP
+        # server shares that same stdout with (§3 architecture decision).
+        self.mute_console = mute_console
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._error_log_path = self.output_dir / "callback_errors.log"
@@ -109,6 +122,9 @@ class SimulationRunner:
 
         self.api = EnergyPlusAPI()
         self.state = self.api.state_manager.new_state()
+
+        if self.mute_console:
+            self.api.runtime.set_console_output_status(self.state, False)
 
         # requestVariable must be called before run_energyplus starts (prior
         # to input processing) -- calling it from callback_begin_new_environment
@@ -302,6 +318,8 @@ class SimulationRunner:
         }
         self._decision_log_file.write(json.dumps(entry) + "\n")
         self._decision_log_file.flush()
+        if self.on_decision is not None:
+            self.on_decision(entry)
 
     def _log_callback_exception(self, where: str) -> None:
         with open(self._error_log_path, "a") as f:
