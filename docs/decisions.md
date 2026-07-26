@@ -15,5 +15,8 @@
   deferred to `requirements-dashboard.txt` and will be installed at the start
   of Phase 5. Core deps (`mcp`, `ollama`, `pyyaml`, `pydantic`, `pytest`) are
   installed now and frozen in `requirements.txt`.
-- **Ollama latency measurement:** TODO — fill in after `scripts/smoke_ollama.py`
-  runs successfully (drives the Phase 4 decision-interval choice).
+- **Ollama latency measurement:** `scripts/smoke_ollama.py` against
+  `qwen2.5:3b-instruct` measured **8.69 s** single-completion latency (toy
+  JSON-decision prompt, cold cache, CPU/M2 inference). Within the plan's
+  expected 2–10 s range (§2, Phase 0.4). At a 60 sim-minute decision interval
+  this is negligible; informs the Phase 4 wall-clock budget (§2, Phase 4.4).
