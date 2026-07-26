@@ -13,9 +13,11 @@ __pycache__/
 # EnergyPlus outputs
 runs/*
 !runs/demo_final/
+!runs/demo_final/**
 eplusout.*
 eplustbl.*
 eplusmtr.*
+eplus*sz.csv
 *.eso
 *.mtr
 *.audit
