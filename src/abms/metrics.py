@@ -82,7 +82,14 @@ def summarize_run(run_dir) -> dict:
 def compare_runs(baseline_dir, controlled_dir) -> dict:
     baseline = summarize_run(baseline_dir)
     controlled = summarize_run(controlled_dir)
+    return {
+        "baseline": baseline,
+        "controlled": controlled,
+        "comparison": _comparison(baseline, controlled),
+    }
 
+
+def _comparison(baseline: dict, controlled: dict) -> dict:
     energy_saved_kwh = baseline["total_hvac_kwh"] - controlled["total_hvac_kwh"]
     energy_saved_pct = (
         100.0 * energy_saved_kwh / baseline["total_hvac_kwh"] if baseline["total_hvac_kwh"] else 0.0
@@ -91,16 +98,30 @@ def compare_runs(baseline_dir, controlled_dir) -> dict:
     carbon_avoided_pct = (
         100.0 * carbon_avoided_kg / baseline["carbon_kg"] if baseline["carbon_kg"] else 0.0
     )
+    return {
+        "energy_saved_kwh": energy_saved_kwh,
+        "energy_saved_pct": energy_saved_pct,
+        "carbon_avoided_kg": carbon_avoided_kg,
+        "carbon_avoided_pct": carbon_avoided_pct,
+        "comfort_compliance_delta_pct": controlled["comfort_compliance_pct"] - baseline["comfort_compliance_pct"],
+    }
 
+
+def compare_three(baseline_dir, rulebased_dir, ai_dir) -> dict:
+    """Three-way comparison for the Phase 4 demo runs (§4.5): baseline vs
+    rule-based vs AI, same period/weather. Built on `summarize_run` +
+    `_comparison` (the same pairwise math `compare_runs` uses) rather than
+    duplicating it, so the two-way and three-way summaries never disagree."""
+    baseline = summarize_run(baseline_dir)
+    rulebased = summarize_run(rulebased_dir)
+    ai = summarize_run(ai_dir)
     return {
         "baseline": baseline,
-        "controlled": controlled,
+        "rulebased": rulebased,
+        "ai": ai,
         "comparison": {
-            "energy_saved_kwh": energy_saved_kwh,
-            "energy_saved_pct": energy_saved_pct,
-            "carbon_avoided_kg": carbon_avoided_kg,
-            "carbon_avoided_pct": carbon_avoided_pct,
-            "comfort_compliance_delta_pct": controlled["comfort_compliance_pct"] - baseline["comfort_compliance_pct"],
+            "rulebased_vs_baseline": _comparison(baseline, rulebased),
+            "ai_vs_baseline": _comparison(baseline, ai),
         },
     }
 

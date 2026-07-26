@@ -170,3 +170,113 @@
   actually-applied action. This is the evidence trail the autonomy rubric
   axis will lean on once Phase 4 adds LLM reasoning text to the same
   schema.
+
+## 2026-07-26 — Phase 4
+
+- **Architecture confirmed, not revisited:** structured-output mode only
+  (§4.1). The agent runner (`src/abms/agent_runner.py`) is a real MCP
+  *client* -- it spawns `abms.mcp_server` as a stdio subprocess (the same
+  tested Phase 3 server) and, at every decision point, calls the read-tools
+  itself, packs the state into one prompt, requires a single JSON decision
+  object back from Ollama, and submits it through the `set_zone_setpoints`
+  write-tool. The MCP layer is genuinely in the loop end to end; native
+  Ollama tool-calling was not attempted, per the plan's explicit v1.1
+  descope.
+- **Reasoning capture threaded through the existing handshake, not
+  bolted on:** `set_zone_setpoints` grew an optional `reasoning` field;
+  `DecisionHandshake` carries it from `submit_decision` to
+  `request_decision`'s caller via `last_reasoning`; `MCPBridgeController`
+  surfaces it; `SimulationRunner._log_decision` reads
+  `getattr(controller, "last_reasoning", None)` into `decisions.jsonl`.
+  Four small, mechanical edits instead of a parallel logging path -- the
+  Phase 3 decision log format didn't change shape, it just gained one
+  field.
+- **Robustness (§4.4) reuses the Phase 3 fallback machinery instead of
+  duplicating it:** on a malformed-JSON-after-one-repair-retry or an
+  unreachable/timed-out Ollama, `agent_runner.py` computes the same
+  `RuleBasedController` decision the sim thread would fall back to on
+  handshake timeout, and submits it itself immediately (with a `[fallback:
+  ...]`-prefixed reasoning string) -- rather than staying silent and
+  waiting out the full 60s handshake timeout for every affected decision.
+  The handshake's own timeout remains the second line of defense in case
+  the runner process itself dies or hangs. Across the full two-week demo
+  run (328 decisions), this path was never exercised -- Ollama never
+  failed once -- but it was exercised deliberately in a unit-style smoke
+  test (killed the connection, confirmed the fallback fires and logs
+  loudly) before the real run.
+- **A real bug found by the first live-Ollama full smoke run:**
+  `ollama-py` (0.6.2, installed) only rewraps `httpx.ConnectError` into the
+  builtin `ConnectionError` it documents; it does **not** rewrap read/pool
+  timeouts, which leak out as raw `httpx.ReadTimeout`. The first
+  `compare-ai` smoke run crashed the whole process on one slow completion
+  under CPU contention (a stray duplicate smoke-test process was still
+  running). Fixed by also catching `httpx.TransportError` in
+  `llm_agent.py`'s `_complete` and raising the same `OllamaUnavailableError`
+  -- a slow/overloaded Ollama must degrade the same way a refused
+  connection does, not crash the run. Also bumped
+  `llm_agent.request_timeout_s` from the Phase 0 toy-prompt-derived 30s to
+  45s once real state+goals+history prompts were measured.
+- **Measured latency for the real prompt, not the Phase 0 toy prompt:**
+  the full `get_building_state` + `get_goals_and_constraints` +
+  `get_recent_history` payload, packed into one prompt per §4.1, measured
+  **17-26s** per completion on `qwen2.5:3b-instruct` (vs. the toy prompt's
+  8.69s from Phase 0) -- well inside the 60s handshake timeout, but the
+  reason `request_timeout_s` needed raising and the reason the two-week
+  demo run took roughly 2h20m wall-clock rather than the plan's ~30min
+  estimate (which was scaled from the toy-prompt number). Documented here
+  as a real deviation, not silently absorbed: the plan's wall-clock math
+  in §4.4/§8.4 assumed toy-prompt latency; real-prompt latency is
+  2-3x that. Two one-week periods remains the right demo scope -- it
+  still completes unattended in a few hours -- but an annual run at this
+  latency would be a multi-day undertaking, not "overnight" as the plan
+  optimistically suggested.
+- **Prompt engineering (§4.2, `prompts/controller_system.md`):** priority-
+  ordered goals (comfort constraint > energy > carbon), the guardrail
+  bounds spelled out explicitly (so the model can reason about what will
+  and won't be clamped), four worked reasoning examples (deep unoccupied
+  setback, pre-occupancy recovery, carbon-aware pre-cooling, steady
+  occupied hold), and an explicit statement that a "no change" decision is
+  a valid and often-correct answer -- an early concern was the model
+  fidgeting every cycle to look "active"; it does not.
+- **Demo run results (`runs/demo_final/`, committed per repo convention --
+  the blessed run for judges), two contrasting one-week periods per
+  `config/default.yaml`'s `demo_periods` (Jan 14-20, Jul 14-20), 328 total
+  AI decisions, zero fallback decisions:**
+
+  | period | vs-baseline energy saved | vs-baseline carbon avoided | comfort compliance (AI / baseline) |
+  |---|---|---|---|
+  | January week (heating-dominated) | 3.09% | 2.71% | 95.9% / 100% |
+  | July week (cooling-dominated) | 16.13% | 7.82% | 100% / 100% |
+
+  Both weeks beat baseline on energy without breaking the 95%
+  occupied-hours comfort floor (§4's exit criteria). The rule-based
+  controller still wins on raw energy % in both periods (8.00%/20.51%) --
+  expected and honestly reported, not concerning: rule-based is a fixed,
+  aggressive occupancy-setback policy with no comfort-vs-savings judgment
+  to make, while the LLM is additionally reasoning about carbon timing and
+  is more conservative near the comfort floor (visible in the January
+  week's lower comfort compliance -- it took a few more calculated risks
+  near the band edge than rule-based did). The July week result, where the
+  AI actually *beat* rule-based on comfort compliance (100% vs 99.8%)
+  while still saving 16% of energy, is the more interesting evidence for
+  the "reasoning, not just clamping" autonomy story.
+- **Decision-log audit (§7's "single best 'is the AI real' check"):** 20
+  decisions sampled at random across both weeks via the new
+  `scripts/sample_decisions.py` (pairs each decision with the telemetry
+  state at that timestamp) -- every one was justified by the visible
+  state: unoccupied-and-in-band -> hold; unoccupied-with-flat-carbon-
+  forecast -> lean into setback; pre-occupancy -> explicit "next cycle is
+  occupied" recovery reasoning; occupied -> hold within band, occasional
+  carbon-timing commentary. Three guardrail clamps appear in this 20-item
+  sample alone (comfort ceiling, cooling hard bound x2), each with an
+  honest note -- the guardrail layer is doing real, visible work, not
+  sitting idle.
+- **A concrete degenerate-decision example, useful for the reliability
+  story (§9 shot 5):** one decision in the smoke-test run had the model
+  request heating=17.5/cooling=26.0 while the building was occupied by 52
+  people, reasoning "expected to be unoccupied soon" -- factually wrong at
+  8:20am on a weekday. The occupied comfort floor clamped heating to 20.0
+  before it reached the actuator. Kept as a documented example rather than
+  papered over: this is exactly the failure mode guardrails exist for, and
+  it demonstrates the deterministic safety layer catching a small model's
+  occasional bad reasoning in production, not just in theory.

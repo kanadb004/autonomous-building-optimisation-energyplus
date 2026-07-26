@@ -315,6 +315,10 @@ class SimulationRunner:
             "requested": None if decision is None else {"heating_c": decision[0], "cooling_c": decision[1]},
             "applied": {"heating_c": result.heating_c, "cooling_c": result.cooling_c},
             "guardrail_notes": result.notes,
+            # LLM reasoning text, when the controller is MCP-driven (§4.3) --
+            # None for controllers that don't set `last_reasoning` (rule-based,
+            # baseline) or on the handshake-timeout fallback path.
+            "reasoning": getattr(self.controller, "last_reasoning", None),
         }
         self._decision_log_file.write(json.dumps(entry) + "\n")
         self._decision_log_file.flush()

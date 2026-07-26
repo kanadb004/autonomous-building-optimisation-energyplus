@@ -29,6 +29,7 @@ class PendingDecision:
     snapshot: dict
     reply_queue: "queue.Queue" = field(default_factory=queue.Queue)
     result_queue: "queue.Queue" = field(default_factory=queue.Queue)
+    reasoning: str | None = None
 
 
 class DecisionHandshake:
@@ -38,6 +39,11 @@ class DecisionHandshake:
         self._lock = threading.Lock()
         self._pending: PendingDecision | None = None
         self._result_target: PendingDecision | None = None
+        # Reasoning text (if any) that came with the decision most recently
+        # returned by `request_decision` -- read by MCPBridgeController right
+        # after the call so it can surface it as `last_reasoning` for the
+        # sim thread's decision log (§4.3). None on the timeout/fallback path.
+        self.last_reasoning: str | None = None
 
     @property
     def awaiting_decision(self) -> bool:
@@ -63,6 +69,7 @@ class DecisionHandshake:
         try:
             try:
                 decision = pending.reply_queue.get(timeout=self.timeout_s)
+                self.last_reasoning = pending.reasoning
             except queue.Empty:
                 self.timeout_count += 1
                 print(
@@ -73,6 +80,7 @@ class DecisionHandshake:
                     flush=True,
                 )
                 decision = fallback()
+                self.last_reasoning = None
             with self._lock:
                 self._result_target = pending
             return decision
@@ -81,16 +89,21 @@ class DecisionHandshake:
                 if self._pending is pending:
                     self._pending = None
 
-    def submit_decision(self, heating_c: float, cooling_c: float) -> PendingDecision | None:
+    def submit_decision(
+        self, heating_c: float, cooling_c: float, reasoning: str | None = None
+    ) -> PendingDecision | None:
         """Called from the `set_zone_setpoints` MCP tool handler. Returns the
         `PendingDecision` (so the caller can wait on its `result_queue` for
         the guardrail-applied values) or None if no decision is currently
         pending -- e.g. the client called the write-tool outside a decision
-        window, or the timeout already fired."""
+        window, or the timeout already fired. `reasoning`, if given, is
+        surfaced via `last_reasoning` once `request_decision` picks this
+        reply up (§4.3)."""
         with self._lock:
             pending = self._pending
         if pending is None:
             return None
+        pending.reasoning = reasoning
         pending.reply_queue.put((heating_c, cooling_c))
         return pending
 

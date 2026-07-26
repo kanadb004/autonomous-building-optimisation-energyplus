@@ -44,4 +44,43 @@ comfort_band:
   occupied_heat_min_c: 20.0
   occupied_cool_max_c: 26.0
 
+# LLM agent runner (§4.1-§4.2). model/host default here, overridden by the
+# OLLAMA_MODEL/OLLAMA_HOST env vars if set (see .env.example) so a larger
+# model can be swapped in without editing this file (§1.2 model-agnostic
+# requirement). qwen2.5:3b-instruct, not the plan's 7b recommendation, per
+# the Phase 0 network-constrained deviation recorded in docs/decisions.md.
+llm_agent:
+  model: qwen2.5:3b-instruct
+  host: http://localhost:11434
+  temperature: 0.2
+  # Measured single-completion latency for the full state+goals+history
+  # prompt (not the Phase 0 toy prompt) is ~17-26s on this machine; margin
+  # kept generous since a slow decision must hit this timeout and fall back
+  # cleanly (§4.4), not hang the run.
+  request_timeout_s: 45
+  keep_alive: "10m"
+  max_repair_retries: 1
+  history_hours: 6
+
+# Demo run period(s) (§4.4): a wall-clock budget of ~5-10s/decision at a
+# 60 sim-minute decision interval means an annual AI run is hours of
+# wall-clock; two contrasting one-week periods (winter heating-dominated,
+# summer cooling-dominated) is the default demo scope, chosen here as a
+# config value specifically so it isn't hardcoded into orchestrator.py --
+# a longer run (e.g. a full season, overnight) is a config edit, not a
+# code change. Each period patches models/building.idf's RunPeriod object
+# (src/abms/idf_utils.with_run_period) rather than requiring separate
+# committed IDF copies.
+demo_periods:
+  - label: january_week
+    begin_month: 1
+    begin_day: 14
+    end_month: 1
+    end_day: 20
+  - label: july_week
+    begin_month: 7
+    begin_day: 14
+    end_month: 7
+    end_day: 20
+
 run_mode: baseline
