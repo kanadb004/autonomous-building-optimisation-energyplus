@@ -1,3 +1,53 @@
-# Discovered variable/meter/actuator names
+# Discovered variable/meter/actuator names — models/building.idf
 
-Populated in Phase 1/2 from `.rdd`/`.mdd`/`.edd` file excerpts.
+Generated from a plain CLI run of `models/building.idf` (`runs/_cli_plain/`,
+gitignored scratch output) via:
+
+```
+energyplus -w models/weather/USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw \
+  -d runs/_cli_plain -r models/building.idf
+```
+
+Full `.rdd`/`.mdd` are in the scratch output dir (gitignored); relevant
+excerpts below are what Phase 1's handle acquisition (`simulation.py`)
+requests.
+
+## Variables (from `eplusout.rdd`) — used in Phase 1
+
+| Variable name | Key | Units | Used for |
+|---|---|---|---|
+| `Site Outdoor Air Drybulb Temperature` | `Environment` | C | outdoor temp |
+| `Zone Air Temperature` | per-zone (`SPACE1-1` … `SPACE5-1`) | C | zone temp |
+| `Zone People Occupant Count` | per-zone | — | occupancy |
+
+Zone key names (from `Zone` objects in the IDF): `SPACE1-1`, `SPACE2-1`,
+`SPACE3-1`, `SPACE4-1`, `SPACE5-1` (plus the unconditioned `PLENUM-1`, not
+polled — no thermostat).
+
+## Meters (from `eplusout.mdd`) — used in Phase 1
+
+| Meter name | Units | Used for |
+|---|---|---|
+| `Electricity:HVAC` | J (cumulative; differenced in `telemetry.py`) | HVAC electricity |
+
+Cross-check value for the dev RunPeriod (1/14-1/20, 168 hours), read from
+`eplusmtr.csv`'s `Electricity:HVAC [J](RunPeriod)` column of the CLI run —
+this is the Phase 1 validation target:
+
+```
+Electricity:HVAC, RunPeriod total = 228,994,628.674 J = 63.6096 kWh
+```
+
+Also cross-checked against `eplustbl.htm`'s "End Uses" table (Heating +
+Cooling + Fans + Pumps electricity rows), same run.
+
+## Setpoint schedules (for Phase 2 actuation, noted here for continuity)
+
+All 5 zones share dual-setpoint thermostats driven by two named schedules:
+- `Htg-SetP-Sch` (heating setpoint, all zones)
+- `Clg-SetP-Sch` (cooling setpoint, all zones)
+
+Existing schedule already includes occupied/unoccupied setback (22.2/23.9 C
+occupied 6:00-20:00 weekdays, 16.7/29.4 C otherwise) — noted per §2
+validation: if Phase 2 rule-based savings come out ~0%, this is why, and the
+prescribed fix (constant-setpoint baseline) applies.
