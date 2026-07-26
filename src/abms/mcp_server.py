@@ -150,7 +150,7 @@ def build_server(datastore: SharedState, handshake: DecisionHandshake, decision_
         }
 
     @mcp.tool()
-    def set_zone_setpoints(heating_c: float, cooling_c: float) -> dict:
+    def set_zone_setpoints(heating_c: float, cooling_c: float, reasoning: str = "") -> dict:
         """Write requested heating/cooling setpoints (deg C, applied to all
         zones) for the currently pending decision. Only valid while
         `get_building_state` reports `awaiting_decision: true` -- calling it
@@ -159,8 +159,10 @@ def build_server(datastore: SharedState, handshake: DecisionHandshake, decision_
         decision, deadband, occupied-hours comfort floor/ceiling); the
         response always reports both what you requested and what was
         actually applied, plus the reason for any clamp, so you can adjust
-        your next decision accordingly."""
-        pending = handshake.submit_decision(heating_c, cooling_c)
+        your next decision accordingly. `reasoning` is a short (1-2
+        sentence) explanation of this decision -- it is persisted verbatim
+        into the decision log for the autonomy record; always include it."""
+        pending = handshake.submit_decision(heating_c, cooling_c, reasoning=reasoning or None)
         if pending is None:
             return {
                 "accepted": False,
