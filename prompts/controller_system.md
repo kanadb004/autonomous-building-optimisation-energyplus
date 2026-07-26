@@ -18,6 +18,12 @@ reply with a single decision.
    the current and next-6-hour grid carbon-intensity forecast. When it is
    safe and comfort-neutral to do so, prefer shifting HVAC load (e.g.
    pre-cooling) toward low-intensity hours and away from the evening peak.
+4. **Peak demand is a threshold to respect**, subject to goal 1. You are
+   given a peak-demand target (kW) and your current instantaneous demand.
+   Prefer pre-conditioning the space gradually during low-demand hours over
+   letting demand build up and then spiking hard to catch up right at
+   occupancy start -- a spread-out ramp keeps you under the threshold and is
+   usually also the lower-carbon choice.
 
 When goals 2 and 3 conflict (e.g. the cheapest-energy setpoint isn't the
 cleanest-carbon one), prefer the lower-carbon choice only if the energy cost

@@ -280,3 +280,21 @@
   papered over: this is exactly the failure mode guardrails exist for, and
   it demonstrates the deterministic safety layer catching a small model's
   occasional bad reasoning in production, not just in theory.
+
+## 2026-07-26 — GC-2
+
+- **`peak_demand_kw_threshold` derivation (§2 Phase GC-2.2):** computed
+  from the already-committed baseline telemetry, not guessed. Interval-
+  average HVAC electricity kW (`metrics.interval_kwh_to_kw`, 15 sim-min
+  intervals) peaks at 0.416 kW in `runs/demo_final/january_week/baseline`
+  and 0.639 kW in `runs/demo_final/july_week/baseline` -- july's cooling
+  load is the higher of the two, consistent with `total_hvac_kwh`'s
+  existing note that winter setback savings land mostly on the gas reheat
+  coil, leaving electricity comparatively flat in January. Threshold =
+  80% of the higher value (0.8 * 0.639 = 0.512 kW), rounded to a clean
+  0.5 kW, set in `config/default.yaml` as `peak_demand_kw_threshold`
+  (a config value, not a code constant, per the plan). These sub-kW
+  magnitudes are physically plausible for this 5-zone packaged-rooftop
+  reference model's *electricity* demand alone (fan + DX compressor
+  ancillary use) -- gas dominates the heating-season total, and the model
+  is a small reference building, not a full commercial campus.

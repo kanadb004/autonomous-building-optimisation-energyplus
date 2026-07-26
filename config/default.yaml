@@ -44,6 +44,16 @@ comfort_band:
   occupied_heat_min_c: 20.0
   occupied_cool_max_c: 26.0
 
+# Peak-demand threshold (GC-2, docs/GAP_CLOSURE_PLAN.md §2 Phase GC-2) --
+# derived empirically, not guessed: baseline january_week peaks at
+# ~0.42 kW interval-average HVAC electricity, july_week at ~0.64 kW (this
+# 5-zone packaged-rooftop model is electricity-light in winter since setback
+# savings land mostly on the gas reheat coil, per total_hvac_kwh's
+# docstring). Threshold = 80% of the higher of the two (0.8 * 0.64 =
+# 0.51 kW), rounded to a clean number. Derivation recorded in
+# docs/decisions.md.
+peak_demand_kw_threshold: 0.5
+
 # LLM agent runner (§4.1-§4.2). model/host default here, overridden by the
 # OLLAMA_MODEL/OLLAMA_HOST env vars if set (see .env.example) so a larger
 # model can be swapped in without editing this file (§1.2 model-agnostic
