@@ -16,8 +16,14 @@ class MCPBridgeController(Controller):
     def __init__(self, handshake: DecisionHandshake, fallback_controller: Controller):
         self.handshake = handshake
         self.fallback_controller = fallback_controller
+        # Read by SimulationRunner._log_decision right after decide()
+        # returns, so the MCP client's reasoning text (if any) lands in
+        # decisions.jsonl (§4.3). None on the timeout/fallback path.
+        self.last_reasoning = None
 
     def decide(self, snapshot: dict):
-        return self.handshake.request_decision(
+        decision = self.handshake.request_decision(
             snapshot, fallback=lambda: self.fallback_controller.decide(snapshot)
         )
+        self.last_reasoning = self.handshake.last_reasoning
+        return decision

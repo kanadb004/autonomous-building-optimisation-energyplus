@@ -1,11 +1,19 @@
-"""CLI entry: run baseline / rulebased / compare (§2.5).
+"""CLI entry: run baseline / rulebased / ai / compare / compare-ai / demo
+(§2.5, §4.5).
 
-`compare` runs baseline then rule-based with identical IDF/EPW/period,
-writing both telemetry sets under `runs/<run_id>/{baseline,rulebased}/` and
-a `summary.json` with the energy/comfort/carbon comparison.
+`compare` runs baseline then rule-based; `compare-ai` adds the AI-controlled
+run and produces a three-way comparison; `demo` runs `compare-ai` once per
+configured demo period (§4.4 -- default two contrasting weeks, a config
+value in config/default.yaml, not hardcoded here), patching
+`models/building.idf`'s RunPeriod per period via `idf_utils` rather than
+requiring committed IDF copies per period. All modes write telemetry under
+`runs/<run_id>/...` and a `summary.json` with the energy/comfort/carbon
+comparison.
 """
 
 import argparse
+import asyncio
+import datetime
 import sys
 from pathlib import Path
 
@@ -13,7 +21,7 @@ from abms import config
 
 config.ensure_pyenergyplus_on_path()
 
-from abms import metrics  # noqa: E402
+from abms import agent_runner, idf_utils, metrics  # noqa: E402
 from abms.controllers.baseline import BaselineController  # noqa: E402
 from abms.controllers.rulebased import RuleBasedController  # noqa: E402
 from abms.simulation import SimulationRunner  # noqa: E402
@@ -22,6 +30,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_IDF = REPO_ROOT / "models" / "building.idf"
 DEFAULT_EPW = REPO_ROOT / "models" / "weather" / "USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw"
 DECISION_INTERVAL_MINUTES = 15
+# The committed models/building.idf's own dev-window RunPeriod (1/14-1/20,
+# §2 Phase 1.1) -- the default period length for `ai`/`compare-ai` when the
+# caller isn't running one of the config-driven `demo` periods.
+DEFAULT_PERIOD_DAYS = 7.0
 
 
 def run_single(mode: str, output_dir: Path, run_id: str, idf_path=DEFAULT_IDF, epw_path=DEFAULT_EPW) -> Path:
@@ -43,6 +55,40 @@ def run_single(mode: str, output_dir: Path, run_id: str, idf_path=DEFAULT_IDF, e
     return run_dir
 
 
+def run_ai(
+    output_dir: Path,
+    run_id: str,
+    period_days: float = DEFAULT_PERIOD_DAYS,
+    idf_path=DEFAULT_IDF,
+    epw_path=DEFAULT_EPW,
+    decision_interval_minutes: int | None = None,
+    timeout_s: float = 60.0,
+) -> Path:
+    """Runs the AI-controlled simulation to completion via `agent_runner`
+    (§4.1) and returns its telemetry directory, in the same
+    `<output_dir>/ai` shape `run_single` uses for baseline/rulebased, so
+    `metrics.compare_three` can treat all three uniformly."""
+    cfg = config.load()
+    interval = decision_interval_minutes or cfg["decision_interval_minutes"]["llm"]
+    llm_agent, history_hours = agent_runner.build_llm_agent()
+    max_decisions = agent_runner.expected_decision_count(period_days, interval) + 2
+    run_dir = output_dir / "ai"
+    asyncio.run(
+        agent_runner.run_agent_session(
+            idf_path=idf_path,
+            epw_path=epw_path,
+            output_dir=run_dir,
+            run_id=run_id,
+            decision_interval_minutes=interval,
+            timeout_s=timeout_s,
+            max_decisions=max_decisions,
+            llm_agent=llm_agent,
+            history_hours=history_hours,
+        )
+    )
+    return run_dir
+
+
 def run_compare(output_dir: Path, run_id: str, idf_path=DEFAULT_IDF, epw_path=DEFAULT_EPW) -> dict:
     baseline_dir = run_single("baseline", output_dir, run_id, idf_path, epw_path)
     rulebased_dir = run_single("rulebased", output_dir, run_id, idf_path, epw_path)
@@ -51,11 +97,66 @@ def run_compare(output_dir: Path, run_id: str, idf_path=DEFAULT_IDF, epw_path=DE
     return summary
 
 
+def run_full_comparison(
+    output_dir: Path, run_id: str, period_days: float = DEFAULT_PERIOD_DAYS, idf_path=DEFAULT_IDF, epw_path=DEFAULT_EPW
+) -> dict:
+    """Baseline vs rule-based vs AI, same period/weather (§4.5)."""
+    baseline_dir = run_single("baseline", output_dir, run_id, idf_path, epw_path)
+    rulebased_dir = run_single("rulebased", output_dir, run_id, idf_path, epw_path)
+    ai_dir = run_ai(output_dir, run_id, period_days, idf_path, epw_path)
+    summary = metrics.compare_three(baseline_dir, rulebased_dir, ai_dir)
+    metrics.write_summary(summary, output_dir / "summary.json")
+    return summary
+
+
+def _period_days(period: dict) -> float:
+    # Arbitrary non-leap reference year -- only the day-count matters, and
+    # none of the configured demo periods span Feb 29.
+    start = datetime.date(2001, period["begin_month"], period["begin_day"])
+    end = datetime.date(2001, period["end_month"], period["end_day"])
+    return (end - start).days + 1
+
+
+def run_demo(output_dir: Path, run_id: str) -> dict:
+    """Runs every period in config/default.yaml's `demo_periods` (§4.4) as
+    its own full baseline/rulebased/AI comparison, writing each under
+    `<output_dir>/<period label>/` plus a combined `summary.json` keyed by
+    period label."""
+    cfg = config.load()
+    building_idf = REPO_ROOT / cfg["building_idf"]
+    weather_file = REPO_ROOT / cfg["weather_file"]
+
+    results = {}
+    for period in cfg["demo_periods"]:
+        label = period["label"]
+        period_dir = output_dir / label
+        patched_idf = period_dir / "building.idf"
+        idf_utils.with_run_period(
+            building_idf,
+            period["begin_month"],
+            period["begin_day"],
+            period["end_month"],
+            period["end_day"],
+            patched_idf,
+        )
+        results[label] = run_full_comparison(
+            period_dir, f"{run_id}_{label}", _period_days(period), patched_idf, weather_file
+        )
+    metrics.write_summary(results, output_dir / "summary.json")
+    return results
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["baseline", "rulebased", "compare"])
+    parser.add_argument("mode", choices=["baseline", "rulebased", "ai", "compare", "compare-ai", "demo"])
     parser.add_argument("--run-id", default="phase2")
     parser.add_argument("--output-dir", default=str(REPO_ROOT / "runs"))
+    parser.add_argument(
+        "--period-days",
+        type=float,
+        default=DEFAULT_PERIOD_DAYS,
+        help="Sim days covered by the IDF's current RunPeriod (ai/compare-ai only).",
+    )
     args = parser.parse_args(argv)
 
     output_dir = Path(args.output_dir) / args.run_id
@@ -66,6 +167,19 @@ def main(argv=None) -> int:
         print(f"comfort_compliance_pct (baseline): {summary['baseline']['comfort_compliance_pct']:.2f}")
         print(f"comfort_compliance_pct (rulebased): {summary['controlled']['comfort_compliance_pct']:.2f}")
         print(f"carbon_avoided_kg: {summary['comparison']['carbon_avoided_kg']:.4f}")
+    elif args.mode == "compare-ai":
+        summary = run_full_comparison(output_dir, args.run_id, args.period_days)
+        for key in ("rulebased_vs_baseline", "ai_vs_baseline"):
+            c = summary["comparison"][key]
+            print(f"{key}: energy_saved_pct={c['energy_saved_pct']:.2f} carbon_avoided_kg={c['carbon_avoided_kg']:.4f}")
+    elif args.mode == "demo":
+        results = run_demo(output_dir, args.run_id)
+        for label, summary in results.items():
+            c = summary["comparison"]["ai_vs_baseline"]
+            print(f"{label}: ai energy_saved_pct={c['energy_saved_pct']:.2f} carbon_avoided_kg={c['carbon_avoided_kg']:.4f}")
+    elif args.mode == "ai":
+        run_dir = run_ai(output_dir, args.run_id, args.period_days)
+        print(f"wrote telemetry to {run_dir}")
     else:
         run_dir = run_single(args.mode, output_dir, args.run_id)
         print(f"wrote telemetry to {run_dir}")
