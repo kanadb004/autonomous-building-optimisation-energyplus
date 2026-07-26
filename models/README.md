@@ -1,8 +1,8 @@
 # models/building.idf
 
 Source: `5ZoneAirCooled.idf` from the EnergyPlus 26.1.0 `ExampleFiles/`
-install, chosen per PROJECT_PLAN.md §1.1 (first-choice candidate; no
-fallback needed — this file did not fight).
+install, and the first candidate tried (no
+fallback needed  -  this file did not fight).
 
 ## Why this file
 
@@ -12,16 +12,16 @@ fallback needed — this file did not fight).
   present and non-trivial (chiller + fans + pumps).
 - Thermostats driven by named setpoint schedules: all 5 conditioned zones
   use `ThermostatSetpoint:DualSetpoint` referencing two shared schedules,
-  `Htg-SetP-Sch` and `Clg-SetP-Sch` — these are the actuation targets for
+  `Htg-SetP-Sch` and `Clg-SetP-Sch`  -  these are the actuation targets for
   Phase 2.
 - No `HVACTemplate:*` objects, so no `ExpandObjects` pre-processing step
-  is needed — the API can run it as-is.
+  is needed  -  the API can run it as-is.
 - Chicago TMY3 weather (bundled, copied into `models/weather/`) gives
   strong heating and cooling seasons.
 
 ## Zones
 
-Single-story, 5000 ft² floor plate, 1 interior + 4 exterior conditioned
+Single-story, 5000 sq ft floor plate, 1 interior + 4 exterior conditioned
 zones plus an unconditioned return plenum (not thermostat-controlled, not
 polled by the telemetry logger):
 
@@ -42,13 +42,13 @@ pumps.
 
 ## Changes made from the stock example file
 
-1. **RunPeriod trimmed** to a 1-week dev window: 1/14–1/20 (was 1/1–12/31).
-   Per §1.1, demo period (1 month or two contrasting months) will be a
+1. **RunPeriod trimmed** to a 1-week dev window: 1/14-1/20 (was 1/1-12/31).
+   The demo period (1 month, or two contrasting months) is a
    separate config value applied later, not baked into this committed IDF.
-2. **Added `Output:Variable,*,Zone People Occupant Count,hourly;`** — not
+2. **Added `Output:Variable,*,Zone People Occupant Count,hourly;`**  -  not
    present in the stock file, needed for the occupancy telemetry field.
 3. **Added `Output:Meter,Electricity:HVAC,hourly;`** (stock file only had
-   `Output:Meter:MeterFileOnly` at monthly/runperiod frequency) — makes the
+   `Output:Meter:MeterFileOnly` at monthly/runperiod frequency)  -  makes the
    per-timestep HVAC electricity readable via a plain CLI run for
    cross-checking, alongside the API path.
 
@@ -60,8 +60,8 @@ End Uses cross-check table (`AllSummaryAndSizingPeriod`).
 ## Setpoint schedules (context for Phase 2)
 
 `Htg-SetP-Sch` / `Clg-SetP-Sch` already encode an occupied/unoccupied
-setback (22.2/23.9 °C occupied weekdays 6:00–20:00, 16.7/29.4 °C
-otherwise) — flagged here because PROJECT_PLAN.md §2 validation warns that
+setback (22.2/23.9  C occupied weekdays 6:00-20:00, 16.7/29.4  C
+otherwise). Flagged here because
 an already-set-back baseline can make the rule-based controller look like
 it saves ~0%; the prescribed fix if that happens is documented there, not
 here.

@@ -1,7 +1,5 @@
-"""Phase 1 validation: run the API wrapper for the 1-week dev RunPeriod,
-plot zone vs outdoor temperature, and cross-check total HVAC electricity
-against the plain-CLI eplustbl.htm / eplusmtr.csv reference (§2 Phase 1
-validation, §7)."""
+"""Runs the one-week dev period, plots it, and cross-checks total HVAC
+electricity against the plain EnergyPlus CLI output."""
 
 import sys
 from pathlib import Path

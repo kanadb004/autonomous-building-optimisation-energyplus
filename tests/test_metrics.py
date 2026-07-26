@@ -1,5 +1,4 @@
-"""Unit tests for the peak-demand kW math (GC-2, docs/GAP_CLOSURE_PLAN.md
-§2 Phase GC-2). Synthetic two-row fixtures only -- no EnergyPlus, per §6."""
+"""Peak-demand kW math. Synthetic fixtures only, no EnergyPlus."""
 
 from abms import metrics
 

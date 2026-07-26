@@ -1,4 +1,4 @@
-"""No-op controller: schedules run exactly as authored in the IDF (§2.2)."""
+"""No-op controller: the IDF's own schedules run untouched."""
 
 from abms.controllers.base import Controller
 

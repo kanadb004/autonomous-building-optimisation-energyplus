@@ -1,7 +1,8 @@
-"""Malformed-LLM-output handling tests (§7, §4.4). Covers valid replies,
-malformed JSON, missing/wrong-typed fields, and absurd (non-finite) values
--- the runner's repair-retry-then-fallback logic depends on
-`DecisionParseError` being raised for exactly these cases and nothing else.
+"""Tests for malformed LLM output.
+
+Valid replies, bad JSON, missing or wrong-typed fields, and non-finite
+numbers. The repair-retry logic depends on DecisionParseError being raised
+for these cases and nothing else.
 """
 
 import sys

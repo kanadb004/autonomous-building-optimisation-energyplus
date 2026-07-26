@@ -1,17 +1,12 @@
-"""MCP tool definitions (§3.2) wired to the decision handshake (§3.3, §6).
+"""MCP tools, wired to the decision handshake.
 
-Architecture (fixed by docs/PROJECT_PLAN.md §3 -- not revisited here): the
-MCP server and the EnergyPlus simulation run in the same Python process. The
-sim thread blocks on a `DecisionHandshake` at each decision interval; MCP
-tool handlers, running on the asyncio event loop that serves stdio, read
-from a `SharedState` and post decisions into that same handshake. No
-serialization, no IPC, no cross-process timing problems.
+The server and the simulation share one process. The sim thread blocks on
+a DecisionHandshake at each interval; the tool handlers run on the asyncio
+loop serving stdio, read from SharedState, and post decisions back into
+that handshake. No IPC, no cross-process timing to get wrong.
 
-Exactly five tools (§3.2's explicit cap -- resist adding more):
-`get_building_state`, `get_recent_history`, `get_goals_and_constraints`,
-`set_zone_setpoints`, `get_performance_so_far`. Every docstring below is
-written for the LLM controller that will read it in Phase 4 -- treat edits
-to them as prompt engineering, not just documentation.
+The tool docstrings below are what the model reads, so changing them
+changes the agent's behaviour.
 """
 
 import argparse
@@ -47,26 +42,21 @@ def build_server(
     decision_interval_minutes: int,
     peak_demand_kw_threshold: float | None = None,
 ) -> FastMCP:
-    """Constructs the FastMCP app with all five tools bound to `datastore`
-    and `handshake`. Separated from `main()` so tests can build a server
-    against hand-fed datastore/handshake objects without spinning up
-    EnergyPlus."""
+    """Build the FastMCP app. Kept out of main() so tests can construct a
+    server without starting EnergyPlus."""
     mcp = FastMCP(name="abms-controller")
 
     @mcp.tool()
     def get_building_state() -> dict:
-        """Current snapshot of the building: per-zone air temperature (C),
-        occupant count, and PMV thermal comfort index (Fanger PMV, target
-        |PMV| <= 0.5 per `get_goals_and_constraints` -- computed from air
-        temp and the simulation month using fixed assumptions for the
-        inputs telemetry doesn't carry: MRT = air temp, RH 50%, air
-        velocity 0.1 m/s, 1.1 met, clothing by season), outdoor drybulb
-        temperature (C), current heating and cooling setpoints (C), current
-        HVAC power (interval energy, kWh, and the equivalent average kW --
-        `current_demand_kw` -- compare this against
-        `get_goals_and_constraints`'s peak-demand threshold), simulation
-        datetime, and whether a decision is currently awaited
-        (`awaiting_decision`). Call this first, every decision cycle."""
+        """Current snapshot of the building. Call this first each cycle.
+
+        Per zone: air temperature (C), occupant count, and PMV comfort
+        index (target |PMV| <= 0.5). Plus outdoor temperature (C), the
+        current heating and cooling setpoints (C), HVAC power as interval
+        kWh and as average kW (current_demand_kw, to compare against the
+        peak-demand threshold), the simulation datetime, and whether a
+        decision is awaited right now (awaiting_decision).
+        """
         latest = datastore.latest()
         if latest is None:
             return {"error": "No simulation state recorded yet."}
@@ -103,12 +93,13 @@ def build_server(
 
     @mcp.tool()
     def get_recent_history(hours: int = 24) -> dict:
-        """Hourly-aggregated history of the last `hours` sim-hours (default
-        24, capped to whatever the rolling buffer holds): mean zone
-        temperature (C), mean outdoor temperature (C), summed HVAC
-        electricity and gas (kWh), and whether the building was occupied
-        during that hour. Use this to spot trends (e.g. a temperature drift
-        toward the comfort floor) before deciding."""
+        """Hourly history for the last `hours` sim-hours.
+
+        Per hour: mean zone temperature (C), mean outdoor temperature (C),
+        HVAC electricity and gas (kWh), and whether the building was
+        occupied. Use it to spot trends, such as a temperature drifting
+        toward the comfort floor, before deciding.
+        """
         rows = datastore.history()
         buckets = defaultdict(list)
         for r in rows:
@@ -135,16 +126,15 @@ def build_server(
 
     @mcp.tool()
     def get_goals_and_constraints() -> dict:
-        """The controller's objectives and hard limits. Comfort is a
-        constraint (must hold during occupied hours); energy, carbon, and
-        peak demand are objectives to minimize/respect. Includes the
-        occupied-hours comfort band and PMV target (|PMV| <= 0.5, per
-        `get_building_state`'s per-zone `pmv`), the actuator bounds and
-        max-step-per-decision guardrails that will clamp any request you
-        make, the peak-demand threshold (compare against
-        `get_building_state`'s `current_demand_kw`), the decision cadence,
-        and the current plus next-6h carbon intensity forecast (kg CO2/kWh)
-        so shifting load to clean hours is a visible, reasoned option."""
+        """Objectives and hard limits.
+
+        Comfort is a constraint and must hold during occupied hours.
+        Energy, carbon and peak demand are objectives. Returns the
+        occupied comfort band and PMV target, the guardrail bounds that
+        will clamp any request you make, the peak-demand threshold, the
+        decision cadence, and a carbon intensity forecast for the current
+        hour and the next six, so load can be shifted to cleaner hours.
+        """
         latest = datastore.latest()
         current_hour = int(latest["timestamp"][11:13]) if latest else 0
         forecast = [
@@ -152,9 +142,9 @@ def build_server(
         ]
         return {
             "goals": {
-                "comfort": "constraint -- must hold during occupied hours",
-                "energy": "objective -- minimize HVAC electricity + gas",
-                "carbon": "objective -- minimize kg CO2; prefer shifting load to low-intensity hours",
+                "comfort": "constraint: must hold during occupied hours",
+                "energy": "objective: minimize HVAC electricity + gas",
+                "carbon": "objective: minimize kg CO2; prefer shifting load to low-intensity hours",
                 "peak_demand": {
                     "threshold_kw": peak_demand_kw_threshold,
                     "guidance": "keep instantaneous HVAC demand below this; pre-conditioning earlier "
@@ -167,7 +157,7 @@ def build_server(
             },
             "pmv_target": {
                 "abs_max": metrics.PMV_COMFORT_THRESHOLD,
-                "guidance": "keep each occupied zone's |PMV| at or below this (ASHRAE 55's comfort criterion)",
+                "guidance": "keep each occupied zone's |PMV| at or below this (ASHRAE 55)",
             },
             "guardrail_bounds_c": {
                 "heating_min": guardrails.HEATING_MIN_C,
@@ -183,23 +173,23 @@ def build_server(
 
     @mcp.tool()
     def set_zone_setpoints(heating_c: float, cooling_c: float, reasoning: str = "") -> dict:
-        """Write requested heating/cooling setpoints (deg C, applied to all
-        zones) for the currently pending decision. Only valid while
-        `get_building_state` reports `awaiting_decision: true` -- calling it
-        otherwise is rejected (`accepted: false`). The deterministic
-        guardrail layer may clamp your request (hard bounds, max step per
-        decision, deadband, occupied-hours comfort floor/ceiling); the
-        response always reports both what you requested and what was
-        actually applied, plus the reason for any clamp, so you can adjust
-        your next decision accordingly. `reasoning` is a short (1-2
-        sentence) explanation of this decision -- it is persisted verbatim
-        into the decision log for the autonomy record; always include it."""
+        """Submit heating and cooling setpoints (deg C, all zones).
+
+        Only valid while get_building_state reports awaiting_decision:
+        true; otherwise the call is rejected. The guardrail layer may
+        clamp the request, so the response reports what you asked for,
+        what was applied, and the reason for any clamp. Adjust your next
+        decision accordingly.
+
+        Always pass `reasoning`: one or two sentences, stored verbatim in
+        the decision log.
+        """
         pending = handshake.submit_decision(heating_c, cooling_c, reasoning=reasoning or None)
         if pending is None:
             return {
                 "accepted": False,
-                "reason": "No decision is currently pending -- call get_building_state first "
-                "and check awaiting_decision.",
+                "reason": "No decision is pending. Call get_building_state and check "
+                "awaiting_decision.",
             }
         try:
             entry = pending.result_queue.get(timeout=APPLIED_RESULT_TIMEOUT_S)
@@ -218,10 +208,9 @@ def build_server(
 
     @mcp.tool()
     def get_performance_so_far() -> dict:
-        """Cumulative HVAC energy for this run so far, comfort compliance
-        and carbon over the trailing 24h window, and how many autonomous
-        decisions have been made. Use this to sanity-check that recent
-        decisions are actually trending toward the objectives."""
+        """Cumulative HVAC energy so far, comfort compliance and carbon
+        over the trailing 24h, and the number of decisions made. Use it to
+        check that recent decisions are trending the right way."""
         latest = datastore.latest()
         if latest is None:
             return {"error": "No simulation state recorded yet."}

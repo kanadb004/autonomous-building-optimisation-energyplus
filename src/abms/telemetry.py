@@ -1,8 +1,7 @@
-"""CSV telemetry logging with a frozen schema (§2 repo structure, §3).
+"""CSV telemetry, one row per zone timestep.
 
-One row per non-warmup, non-sizing zone timestep. This schema is the
-dashboard's input (Phase 5) -- do not change column names without updating
-every reader.
+The dashboard and the metrics code both read these column names, so don't
+rename one without updating them.
 """
 
 import csv
@@ -20,11 +19,8 @@ FIELDNAMES = (
         "cooling_setpoint_c",
         "hvac_electricity_interval_kwh",
         "hvac_electricity_cumulative_kwh",
-        # Phase 2 addition: the boiler's natural-gas meter. During a
-        # heating-dominated week, setback savings land almost entirely on
-        # gas (reheat coil energy), not electricity -- see docs/decisions.md
-        # "Phase 2 energy-metric broadening". Electricity:HVAC alone made
-        # setback look like it saved ~0%.
+        # The boiler's gas meter. In winter almost all the setback saving
+        # lands here rather than on electricity.
         "hvac_gas_interval_kwh",
         "hvac_gas_cumulative_kwh",
     ]
@@ -32,8 +28,8 @@ FIELDNAMES = (
 
 
 class TelemetryLogger:
-    """Appends one CSV row per call to `append`. Flushes every row so a
-    mid-run crash never loses more than the in-flight record."""
+    """Appends one row per call. Flushes every row, so a crash loses at
+    most the record in flight."""
 
     def __init__(self, csv_path: Path):
         self.csv_path = Path(csv_path)

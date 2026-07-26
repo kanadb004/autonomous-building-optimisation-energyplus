@@ -1,14 +1,11 @@
-"""CLI entry: run baseline / rulebased / ai / compare / compare-ai / demo
-(§2.5, §4.5).
+"""CLI entry point.
 
-`compare` runs baseline then rule-based; `compare-ai` adds the AI-controlled
-run and produces a three-way comparison; `demo` runs `compare-ai` once per
-configured demo period (§4.4 -- default two contrasting weeks, a config
-value in config/default.yaml, not hardcoded here), patching
-`models/building.idf`'s RunPeriod per period via `idf_utils` rather than
-requiring committed IDF copies per period. All modes write telemetry under
-`runs/<run_id>/...` and a `summary.json` with the energy/comfort/carbon
-comparison.
+compare runs baseline then rule-based. compare-ai adds the AI run for a
+three-way comparison. demo repeats compare-ai for each period listed in
+config/default.yaml, patching the IDF's RunPeriod for each one instead of
+keeping a committed IDF per period.
+
+Every mode writes telemetry under runs/<run_id>/ plus a summary.json.
 """
 
 import argparse
@@ -32,9 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_IDF = REPO_ROOT / "models" / "building.idf"
 DEFAULT_EPW = REPO_ROOT / "models" / "weather" / "USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw"
 DECISION_INTERVAL_MINUTES = 15
-# The committed models/building.idf's own dev-window RunPeriod (1/14-1/20,
-# §2 Phase 1.1) -- the default period length for `ai`/`compare-ai` when the
-# caller isn't running one of the config-driven `demo` periods.
+# Length of the committed IDF's own RunPeriod, 1/14 to 1/20.
 DEFAULT_PERIOD_DAYS = 7.0
 
 
@@ -66,10 +61,11 @@ def run_ai(
     decision_interval_minutes: int | None = None,
     timeout_s: float = 60.0,
 ) -> Path:
-    """Runs the AI-controlled simulation to completion via `agent_runner`
-    (§4.1) and returns its telemetry directory, in the same
-    `<output_dir>/ai` shape `run_single` uses for baseline/rulebased, so
-    `metrics.compare_three` can treat all three uniformly."""
+    """Run the AI-controlled simulation and return its telemetry dir.
+
+    Same <output_dir>/<mode> shape run_single uses, so compare_three can
+    treat all three the same way.
+    """
     cfg = config.load()
     interval = decision_interval_minutes or cfg["decision_interval_minutes"]["llm"]
     llm_agent, history_hours, _mode = agent_runner.build_llm_agent()
@@ -102,7 +98,7 @@ def run_compare(output_dir: Path, run_id: str, idf_path=DEFAULT_IDF, epw_path=DE
 def run_full_comparison(
     output_dir: Path, run_id: str, period_days: float = DEFAULT_PERIOD_DAYS, idf_path=DEFAULT_IDF, epw_path=DEFAULT_EPW
 ) -> dict:
-    """Baseline vs rule-based vs AI, same period/weather (§4.5)."""
+    """Baseline vs rule-based vs AI over the same period and weather."""
     baseline_dir = run_single("baseline", output_dir, run_id, idf_path, epw_path)
     rulebased_dir = run_single("rulebased", output_dir, run_id, idf_path, epw_path)
     ai_dir = run_ai(output_dir, run_id, period_days, idf_path, epw_path)
@@ -112,10 +108,8 @@ def run_full_comparison(
 
 
 def _write_manifest(period_dir: Path, source_idf_path: Path, patched_idf_path: Path) -> None:
-    """Records model provenance next to a period's runtime-patched IDF: the
-    source model path and a content hash, so the committed run dir is
-    self-describing without needing a git hash captured from inside the run
-    (`git rev-parse` isn't available there)."""
+    """Record the source model path and its hash next to the patched IDF,
+    so a run directory describes itself."""
     source_hash = hashlib.sha256(source_idf_path.read_bytes()).hexdigest()
     manifest = {
         "source_idf": str(source_idf_path.relative_to(REPO_ROOT)),
@@ -126,18 +120,18 @@ def _write_manifest(period_dir: Path, source_idf_path: Path, patched_idf_path: P
 
 
 def _period_days(period: dict) -> float:
-    # Arbitrary non-leap reference year -- only the day-count matters, and
-    # none of the configured demo periods span Feb 29.
+    # Any non-leap year will do; only the day count matters here.
     start = datetime.date(2001, period["begin_month"], period["begin_day"])
     end = datetime.date(2001, period["end_month"], period["end_day"])
     return (end - start).days + 1
 
 
 def run_demo(output_dir: Path, run_id: str) -> dict:
-    """Runs every period in config/default.yaml's `demo_periods` (§4.4) as
-    its own full baseline/rulebased/AI comparison, writing each under
-    `<output_dir>/<period label>/` plus a combined `summary.json` keyed by
-    period label."""
+    """Run a full three-way comparison for each configured demo period.
+
+    Each lands under <output_dir>/<label>/, with a combined summary.json
+    keyed by label.
+    """
     cfg = config.load()
     building_idf = REPO_ROOT / cfg["building_idf"]
     weather_file = REPO_ROOT / cfg["weather_file"]
@@ -172,7 +166,7 @@ def main(argv=None) -> int:
         "--period-days",
         type=float,
         default=DEFAULT_PERIOD_DAYS,
-        help="Sim days covered by the IDF's current RunPeriod (ai/compare-ai only).",
+        help="Sim days in the IDF's RunPeriod (ai and compare-ai only).",
     )
     args = parser.parse_args(argv)
 

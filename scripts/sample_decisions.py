@@ -1,7 +1,6 @@
-"""Phase 4 validation (§7 "decision-log audit"): sample N random decisions
-from an AI run's decisions.jsonl and pair each with the telemetry state at
-that timestamp, so a human can check every decision is justified by what
-the model actually saw (§4's "Validation before Phase 5 sign-off").
+"""Samples random decisions from a run and pairs each with the telemetry
+at that timestamp, so you can check the decision against what the model
+actually saw.
 """
 
 import argparse

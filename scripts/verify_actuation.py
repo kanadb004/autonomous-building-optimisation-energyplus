@@ -1,8 +1,9 @@
-"""§2.1 actuation sanity check: actuate an absurd cooling setpoint (15 C,
-guardrails bypassed deliberately -- this is a wiring test, not a normal
-decision) for one day and confirm the zone temperature actually responds.
-Proves the actuator handles are wired to the schedule the thermostat
-*actually* reads, not a similarly-named decoy (§2.1 risk, §6 trap #8)."""
+"""Actuation wiring check: force an absurd cooling setpoint for a day,
+guardrails bypassed on purpose, and confirm the zone temperature responds.
+
+Proves the actuator drives the schedule the thermostat really reads, and
+not a similarly named decoy.
+"""
 
 import sys
 from pathlib import Path

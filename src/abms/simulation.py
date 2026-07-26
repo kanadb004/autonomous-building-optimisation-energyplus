@@ -1,8 +1,7 @@
-"""EnergyPlus wrapper: dedicated thread, callbacks, variable/meter handles,
-actuators, warmup/sizing filtering (§2 Phases 1-2, §6 loop mechanics).
+"""EnergyPlus wrapper: handles, actuators, telemetry.
 
-The E+ API call blocks until simulation end, so it runs on a dedicated
-thread; callbacks registered with the runtime execute on that thread.
+run_energyplus blocks until the simulation ends, so it runs on its own
+thread. Callbacks fire on that thread.
 """
 
 import json
@@ -13,54 +12,38 @@ from pathlib import Path
 
 from abms import guardrails
 from abms.controllers.baseline import BaselineController
-from abms.telemetry import FIELDNAMES, ZONE_NAMES, TelemetryLogger  # noqa: F401 (FIELDNAMES re-exported for callers)
+from abms.telemetry import FIELDNAMES, ZONE_NAMES, TelemetryLogger  # noqa: F401 (re-exported)
 
-# KindOfSim value for an actual weather-file run period (as opposed to a
-# sizing design day or HVAC-sizing pass). Confirmed against the installed
-# EnergyPlus 26.1.0 pyenergyplus API by the bundled example plugin script
-# ExampleFiles/PythonPlugin1ZoneUncontrolledTrackHistory.py, which uses the
-# same check (`kind_of_sim(state) != 3` to skip non-run-period callbacks).
+# Weather-file run period, as opposed to a sizing or design-day pass.
 KIND_OF_SIM_RUN_PERIOD_WEATHER = 3
 
 HEATING_SETPOINT_SCHEDULE = "Htg-SetP-Sch"
 COOLING_SETPOINT_SCHEDULE = "Clg-SetP-Sch"
 HVAC_ELECTRICITY_METER = "Electricity:HVAC"
-# Boiler natural-gas meter (§ Phase 2 energy-metric broadening, docs/decisions.md):
-# in a heating-dominated week, setback savings land on gas (reheat coil), not
-# electricity -- Electricity:HVAC alone made setback look like ~0% savings.
+# Setback savings show up on gas (reheat coil) in winter, not electricity.
 HVAC_GAS_METER = "Heating:NaturalGas"
 
 
 def normalize_timestamp(year: int, month: int, day: int, hour: int, minutes: int) -> datetime:
-    """Normalize EnergyPlus's end-of-interval time fields into a real
-    datetime. `hour` is 0-23 and `minutes` is 1-60 *minutes into that hour*
-    (i.e. minutes=60 means the interval ended exactly on the next hour, not
-    literally ":60"). Using timedelta addition -- instead of manual
-    hour/day/month carry logic -- lets Python's calendar arithmetic handle
-    every rollover (hour, day, month, year) in one place."""
+    """Turn E+ end-of-interval time fields into a datetime.
+
+    hour is 0-23, minutes is 1-60 minutes into that hour, so minutes=60
+    means the interval ended on the next hour. timedelta handles the
+    rollovers.
+    """
     return datetime(year, month, day) + timedelta(hours=hour, minutes=minutes)
 
 
 class SimulationRunner:
-    """Runs one EnergyPlus simulation on a dedicated thread, logging
-    per-zone-timestep telemetry (excluding warmup and sizing periods) to
-    `<output_dir>/telemetry.csv`.
+    """Runs one simulation, writing telemetry.csv and decisions.jsonl.
 
-    `on_state`, if given, is called with each telemetry record dict from the
-    simulation thread -- callers must not block or raise.
+    on_state is called with each telemetry record, on_decision with each
+    decision entry once it has been applied. Both run on the simulation
+    thread, so they must not block or raise.
 
-    `on_decision`, if given, is called with each decision-log entry dict
-    (same shape as one `decisions.jsonl` line) right after it's applied to
-    the actuators and written to disk -- callers must not block or raise.
-    Used by the MCP server (§3) to deliver the guardrail-applied values back
-    to whichever `set_zone_setpoints` call is waiting on them.
-
-    `controller`, if given, is consulted every `decision_interval_minutes`
-    of simulation time (§2.3); its decisions pass through `guardrails.validate`
-    and are written to the heating/cooling setpoint-schedule actuators
-    (§2.1). Defaults to `BaselineController` (no actuation at all -- schedules
-    run exactly as authored). Every decision is appended to
-    `<output_dir>/decisions.jsonl` (§2.6).
+    controller is consulted every decision_interval_minutes of sim time.
+    Its decisions go through guardrails.validate before reaching the
+    actuators. Defaults to BaselineController, which doesn't actuate.
     """
 
     def __init__(
@@ -85,9 +68,7 @@ class SimulationRunner:
         self.on_decision = on_decision
         self.controller = controller if controller is not None else BaselineController()
         self.decision_interval = timedelta(minutes=decision_interval_minutes)
-        # MCP mode needs this: EnergyPlus prints progress lines straight to
-        # stdout/stderr, which corrupts the stdio JSON-RPC channel the MCP
-        # server shares that same stdout with (§3 architecture decision).
+        # E+ progress output would corrupt the MCP server's stdio channel.
         self.mute_console = mute_console
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -126,9 +107,7 @@ class SimulationRunner:
         if self.mute_console:
             self.api.runtime.set_console_output_status(self.state, False)
 
-        # requestVariable must be called before run_energyplus starts (prior
-        # to input processing) -- calling it from callback_begin_new_environment
-        # is too late, since that callback fires after GetInput.
+        # Must happen before run_energyplus; by the first callback it's too late.
         for variable_name, key in self._variables_to_request():
             self.api.exchange.request_variable(self.state, variable_name, key)
 
@@ -142,7 +121,7 @@ class SimulationRunner:
         self.telemetry.close()
         self._decision_log_file.close()
 
-    # -- callbacks (run on the simulation thread; every body is wrapped) --
+    # Callbacks below run on the simulation thread.
 
     def _on_end_zone_timestep(self, state) -> None:
         try:
@@ -170,9 +149,7 @@ class SimulationRunner:
         return reqs
 
     def _acquire_handles(self, state) -> None:
-        """Hard-fails with a clear message naming the requested variable if
-        any handle comes back invalid (-1) -- an invalid handle otherwise
-        silently reads as garbage (§6 trap #2)."""
+        """Fail loudly on a -1 handle; those otherwise read as garbage."""
 
         def get_var(name, key):
             handle = self.api.exchange.get_variable_handle(state, name, key)
@@ -220,11 +197,8 @@ class SimulationRunner:
 
         ts = normalize_timestamp(ex.year(state), ex.month(state), ex.day_of_month(state), ex.hour(state), ex.minutes(state))
 
-        # get_meter_value on this API version returns the interval (not
-        # lifetime-cumulative) value -- verified against the installed
-        # pyenergyplus docstring, which overrides the plan's general "meters
-        # are cumulative" assumption for this specific API version. J -> kWh
-        # conversion happens in exactly this one place.
+        # get_meter_value returns the interval value, not a running total.
+        # J to kWh conversion happens here and nowhere else.
         interval_kwh = ex.get_meter_value(state, h["hvac_meter"]) / 3.6e6
         self._cumulative_hvac_kwh += interval_kwh
 
@@ -255,17 +229,15 @@ class SimulationRunner:
             self._maybe_decide(state, ts, record)
 
     def _maybe_decide(self, state, ts: datetime, record: dict) -> None:
-        """Decision-interval gating (§2.3): the controller is consulted only
-        every `decision_interval` of simulation time, not every zone
-        timestep -- cheap timesteps vastly outnumber decision timesteps."""
+        """Consult the controller once per decision_interval, not every
+        timestep."""
         if self._last_decision_time is not None and ts - self._last_decision_time < self.decision_interval:
             return
         self._last_decision_time = ts
 
         if self._applied_heating_c is None:
-            # First decision point: initialize "previous applied" from the
-            # schedule's own authored value so the max-step guardrail has a
-            # sane baseline instead of comparing against nothing.
+            # Seed the previous value from the schedule so the max-step
+            # guardrail has something to compare against on the first call.
             self._applied_heating_c = record["heating_setpoint_c"]
             self._applied_cooling_c = record["cooling_setpoint_c"]
 
@@ -275,17 +247,14 @@ class SimulationRunner:
 
         decision = self.controller.decide(snapshot)
         if decision is None:
-            # "No change": explicitly re-write the last applied value rather
-            # than relying on the actuator to revert on its own -- it never
-            # does (§6 trap #9).
+            # No change still means re-writing the last value; the actuator
+            # never reverts on its own.
             result = guardrails.GuardrailResult(
                 heating_c=self._applied_heating_c, cooling_c=self._applied_cooling_c, notes=[]
             )
         elif getattr(self.controller, "bypass_guardrails", False):
-            # Only for the §2.1 absurd-value actuation sanity check --
-            # writes the controller's raw request straight to the actuator,
-            # unclamped, to prove the actuator is wired to the schedule the
-            # thermostat actually reads. Never used by real controllers.
+            # Sanity-check path only: write the raw request unclamped, to
+            # prove the actuator really drives the thermostat's schedule.
             requested_heating_c, requested_cooling_c = decision
             result = guardrails.GuardrailResult(heating_c=requested_heating_c, cooling_c=requested_cooling_c, notes=[])
         else:
@@ -315,9 +284,7 @@ class SimulationRunner:
             "requested": None if decision is None else {"heating_c": decision[0], "cooling_c": decision[1]},
             "applied": {"heating_c": result.heating_c, "cooling_c": result.cooling_c},
             "guardrail_notes": result.notes,
-            # LLM reasoning text, when the controller is MCP-driven (§4.3) --
-            # None for controllers that don't set `last_reasoning` (rule-based,
-            # baseline) or on the handshake-timeout fallback path.
+            # None unless the controller sets last_reasoning.
             "reasoning": getattr(self.controller, "last_reasoning", None),
         }
         self._decision_log_file.write(json.dumps(entry) + "\n")

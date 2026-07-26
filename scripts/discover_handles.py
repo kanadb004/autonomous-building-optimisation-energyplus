@@ -1,2 +1,1 @@
-# Dumps rdd/mdd/edd-derived variable/meter/actuator names for the chosen model.
-# Implemented in Phase 1/2.
+# Dumps the variable, meter and actuator names available for a model.

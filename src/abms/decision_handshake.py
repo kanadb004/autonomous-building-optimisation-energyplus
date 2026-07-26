@@ -1,14 +1,12 @@
-"""The decision handshake (§3.3, §6 steps 4-9): the mechanism by which the
-sim thread says "decision point reached," blocks on a response queue with a
-wall-clock timeout, and proceeds with either the MCP client's validated
-decision or a fallback controller's decision if the timeout fires.
+"""The decision handshake.
 
-Lives in its own module (rather than inside `mcp_server.py` or a
-`Controller` subclass) because both sides need it without importing each
-other: `controllers/mcp_bridge.py` calls `request_decision` from the sim
-thread; `mcp_server.py`'s `set_zone_setpoints` tool calls `submit_decision`
-from the asyncio event loop. Same process, same in-memory queue -- no
-serialization, no IPC (§3 architecture decision).
+At a decision point the sim thread blocks on a queue with a timeout, then
+proceeds with either the MCP client's decision or the fallback
+controller's.
+
+It sits in its own module because both sides need it without importing
+each other: mcp_bridge calls request_decision from the sim thread, and the
+set_zone_setpoints tool calls submit_decision from the event loop.
 """
 
 import queue
@@ -17,10 +15,8 @@ import threading
 from dataclasses import dataclass, field
 
 DEFAULT_TIMEOUT_S = 60.0
-# How long `set_zone_setpoints` waits for the sim thread to guardrail-validate,
-# apply, and log a decision it just handed over -- this is local in-process
-# work (no I/O), so anything beyond a couple seconds indicates a bug, not
-# normal latency.
+# How long set_zone_setpoints waits for the applied result. This is
+# in-process work, so a few seconds means a bug, not slowness.
 APPLIED_RESULT_TIMEOUT_S = 5.0
 
 
@@ -39,10 +35,8 @@ class DecisionHandshake:
         self._lock = threading.Lock()
         self._pending: PendingDecision | None = None
         self._result_target: PendingDecision | None = None
-        # Reasoning text (if any) that came with the decision most recently
-        # returned by `request_decision` -- read by MCPBridgeController right
-        # after the call so it can surface it as `last_reasoning` for the
-        # sim thread's decision log (§4.3). None on the timeout/fallback path.
+        # Reasoning from the most recent decision, picked up by
+        # MCPBridgeController for the decision log. None on the fallback path.
         self.last_reasoning: str | None = None
 
     @property
@@ -55,13 +49,11 @@ class DecisionHandshake:
             return dict(self._pending.snapshot) if self._pending is not None else None
 
     def request_decision(self, snapshot: dict, fallback):
-        """Called on the sim thread at a decision point. Blocks up to
-        `timeout_s` waiting for `submit_decision` to be called via MCP; on
-        timeout, logs loudly to stderr and returns `fallback()` instead so
-        the simulation can never hang past `timeout_s` (§6 trap #4). Returns
-        the (heating_c, cooling_c) tuple to hand to `guardrails.validate` --
-        this function never applies guardrails itself, that stays the sim
-        thread's job either way.
+        """Block on the sim thread until a decision arrives or timeout_s
+        passes, in which case fallback() is used instead.
+
+        Returns the (heating_c, cooling_c) tuple. Guardrails stay the sim
+        thread's job and are not applied here.
         """
         pending = PendingDecision(snapshot=snapshot)
         with self._lock:
@@ -74,7 +66,7 @@ class DecisionHandshake:
                 self.timeout_count += 1
                 print(
                     f"[decision_handshake] TIMEOUT after {self.timeout_s}s waiting for an MCP "
-                    f"decision at sim time {snapshot.get('timestamp')} -- falling back to the "
+                    f"decision at sim time {snapshot.get('timestamp')}, falling back to the "
                     f"rule-based controller. (timeout #{self.timeout_count})",
                     file=sys.stderr,
                     flush=True,
@@ -92,13 +84,12 @@ class DecisionHandshake:
     def submit_decision(
         self, heating_c: float, cooling_c: float, reasoning: str | None = None
     ) -> PendingDecision | None:
-        """Called from the `set_zone_setpoints` MCP tool handler. Returns the
-        `PendingDecision` (so the caller can wait on its `result_queue` for
-        the guardrail-applied values) or None if no decision is currently
-        pending -- e.g. the client called the write-tool outside a decision
-        window, or the timeout already fired. `reasoning`, if given, is
-        surfaced via `last_reasoning` once `request_decision` picks this
-        reply up (§4.3)."""
+        """Hand a decision to the waiting sim thread.
+
+        Returns the PendingDecision so the caller can wait on its
+        result_queue, or None if nothing is pending, e.g. the write tool
+        was called outside a decision window or the timeout already fired.
+        """
         with self._lock:
             pending = self._pending
         if pending is None:
@@ -108,10 +99,8 @@ class DecisionHandshake:
         return pending
 
     def publish_result(self, entry: dict) -> None:
-        """Called (via `SimulationRunner`'s `on_decision` hook) right after a
-        decision -- MCP-submitted or fallback -- has been guardrail-validated,
-        written to the actuators, and logged. Delivers the applied result
-        back to whichever `set_zone_setpoints` call is waiting on it."""
+        """Deliver the applied result back to the waiting set_zone_setpoints
+        call. Called from SimulationRunner's on_decision hook."""
         with self._lock:
             pending = self._result_target
             self._result_target = None

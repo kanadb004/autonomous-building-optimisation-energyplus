@@ -1,6 +1,4 @@
-"""Phase 1 validation plot: one week of zone temperature vs outdoor
-temperature (§2 Phase 1 validation). Throwaway/re-runnable, not a
-dashboard component."""
+"""Plots a week of zone temperature against outdoor temperature."""
 
 import csv
 import sys

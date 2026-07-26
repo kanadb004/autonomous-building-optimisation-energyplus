@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# GC-5.1 (docs/GAP_CLOSURE_PLAN.md §2 Phase GC-5): the full-January (31-day)
-# extended-horizon reliability run. Patches models/building.idf's RunPeriod
-# to Jan 1-31 via the existing orchestrator path (abms.idf_utils.
-# with_run_period, the same call run_demo() makes per period), runs the fast
-# no-LLM baseline first, then the AI-controlled run via agent_runner at the
-# config-driven decision interval (structured mode only -- GC-5.2 forbids
-# native mode for this run). Unattended: ~744 decisions at 17-26s/decision
-# is a 3.5-5.4h wall-clock AI leg. Meant to be started and left alone.
+# Full-January reliability run. Patches the RunPeriod to Jan 1-31, runs the
+# fast baseline, then the AI run in structured mode.
+#
+# That's about 744 decisions, so the AI leg takes 3-5 hours. Start it and
+# leave it alone.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -49,7 +46,7 @@ from abms.orchestrator import run_single
 run_single('baseline', Path('${OUTPUT_DIR}'), '${RUN_ID}', Path('${PATCHED_IDF}'), Path('${WEATHER}'))
 "
 
-echo "[run_extended] AI run (structured mode, 31 days, config decision interval) -> ${OUTPUT_DIR}/ai"
+echo "[run_extended] AI run (structured mode, 31 days) -> ${OUTPUT_DIR}/ai"
 python -m abms.agent_runner \
     --idf "$PATCHED_IDF" \
     --epw "$WEATHER" \

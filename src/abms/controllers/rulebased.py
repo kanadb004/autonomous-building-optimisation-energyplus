@@ -1,18 +1,14 @@
-"""Occupancy-based setback controller (§2.2) -- also the LLM-failure
-fallback from Phase 4 onward. Deep setback when no zone is occupied,
-comfortable setpoints when any zone is occupied. Deliberately simple: the
-insurance-policy controller, not the one doing the interesting reasoning.
+"""Occupancy-based setback controller, also the fallback when the LLM
+fails. Setback when nothing is occupied, comfortable setpoints when
+anything is. Kept simple on purpose.
 """
 
 from abms.controllers.base import Controller
 
 OCCUPIED_HEAT_C = 21.0
 OCCUPIED_COOL_C = 24.0
-# Deeper than the baseline's modest fixed night setback (18/27, see
-# models/building.idf), but not maximally deep -- a smart, occupancy-aware
-# controller earns its keep through cadence (15-min decisions vs. a static
-# weekly program) and depth together, not depth alone (§7 Phase 2: >30%
-# savings vs. a defensible baseline is a "suspect a broken baseline" smell).
+# Deeper than the IDF's own night setback of 18/27, but not extreme. Most
+# of the gain comes from deciding every 15 minutes, not from depth alone.
 UNOCCUPIED_HEAT_C = 18.3
 UNOCCUPIED_COOL_C = 28.0
 

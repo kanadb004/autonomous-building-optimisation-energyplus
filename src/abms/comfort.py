@@ -1,24 +1,9 @@
-"""Fanger PMV thermal comfort index (GC-3, docs/GAP_CLOSURE_PLAN.md §2 Phase
-GC-3).
+"""Fanger PMV comfort index, per ISO 7730 / ASHRAE 55.
 
-Self-contained implementation of the Fanger Predicted Mean Vote per ISO 7730
-/ ASHRAE 55 (the standard iterative clothing-surface-temperature solution).
-No pip dependency -- the equation set is ~40 lines and the network in this
-environment is unreliable, so `pythermalcomfort` was deliberately not added
-(docs/GAP_CLOSURE_PLAN.md §4).
-
-**Design decision (made -- not revisited here):** PMV is computed post-hoc
-in Python from already-recorded telemetry, not via EnergyPlus's native
-Fanger reporting. No resimulation happens in this phase.
-
-**Fixed assumptions** (telemetry does not carry these inputs, so they are
-held constant; also stated in docs/architecture.md per GC-3.1):
-- mean radiant temperature = air temperature (no surface-temp data logged)
-- relative humidity = 50% (humidity not tracked in telemetry)
-- air velocity = 0.1 m/s (typical still indoor air)
-- metabolic rate = 1.1 met (light office work)
-- clothing insulation = 1.0 clo October-April (heating months), 0.5 clo
-  May-September (cooling months), selected by the timestamp's month
+Computed after the fact from recorded telemetry rather than by EnergyPlus.
+Telemetry doesn't carry the other PMV inputs, so they are held fixed:
+mean radiant temp = air temp, RH 50%, air velocity 0.1 m/s, 1.1 met, and
+clothing by month.
 """
 
 import math
@@ -32,18 +17,19 @@ HEATING_MONTHS = {10, 11, 12, 1, 2, 3, 4}
 
 
 def clo_for_month(month: int) -> float:
-    """1.0 clo Oct-Apr, 0.5 clo May-Sep (GC-3.1's fixed clothing schedule)."""
+    """1.0 clo Oct-Apr, 0.5 clo May-Sep."""
     return CLO_HEATING_MONTHS if month in HEATING_MONTHS else CLO_COOLING_MONTHS
 
 
 def pmv(ta: float, tr: float, rh: float, vel: float, met: float, clo: float) -> float:
-    """Fanger PMV via the standard iterative clothing-surface-temperature
-    solution (ISO 7730 / ASHRAE 55). ta/tr in degC, rh in %, vel in m/s, met
-    in met, clo in clo. External work (wme) is assumed zero."""
+    """PMV by the usual iterative solution for clothing surface temperature.
+
+    ta/tr in degC, rh in %, vel in m/s. External work is assumed zero.
+    """
     pa = rh * 10.0 * math.exp(16.6536 - 4030.183 / (ta + 235.0))
     icl = 0.155 * clo
     m = met * 58.15
-    mw = m  # external work (wme) assumed zero
+    mw = m  # external work assumed zero
 
     fcl = 1.0 + 1.29 * icl if icl <= 0.078 else 1.05 + 0.645 * icl
 
@@ -85,9 +71,7 @@ def pmv(ta: float, tr: float, rh: float, vel: float, met: float, clo: float) -> 
 
 
 def pmv_for_zone(air_temp_c: float, month: int) -> float:
-    """High-level entry point: PMV from air temperature and month alone,
-    applying GC-3.1's fixed assumptions (MRT = air temp, RH 50%, air
-    velocity 0.1 m/s, 1.1 met, clo by month)."""
+    """PMV from air temperature and month, using the fixed assumptions."""
     return pmv(
         ta=air_temp_c,
         tr=air_temp_c,

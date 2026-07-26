@@ -1,15 +1,14 @@
-"""PMV anchors + monotonicity (GC-3.4, docs/GAP_CLOSURE_PLAN.md §2 Phase
-GC-3). PMV math fails silently when wrong, so it is anchored against two
-standard verification cases (tolerance +/-0.15 -- not exact, catches
-unit/term bugs) plus monotonicity and neutrality sanity checks.
+"""PMV anchors and monotonicity checks.
 
-The warm anchor is the ISO 7730:2005 Annex verification row (27.0C /
-RH 60% / 1.2 met / 0.5 clo -> PMV ~ +0.77), not the plan's originally
-transcribed ASHRAE-55 boundary case (25.7C / RH 67% / 1.1 met / 0.5 clo ->
-claimed PMV ~ +0.5), which failed by 0.27 under debugging while the cold
-anchor and independent sanity checks (neutral-point crossing, monotonicity)
-all held -- i.e. a bad anchor transcription, not an implementation bug. Do
-not "fix" this back to the original row; see docs/decisions.md.
+Wrong PMV math fails silently, so the implementation is anchored against
+two standard verification cases at +/-0.15, plus monotonicity and
+neutrality checks.
+
+The warm anchor is the ISO 7730:2005 Annex row (27.0C, RH 60%, 1.2 met,
+0.5 clo, PMV about +0.77). An earlier ASHRAE-55 boundary case was tried
+first and missed by 0.27 while the cold anchor and the sanity checks all
+held, which made it a bad transcription rather than a real bug. Don't
+switch it back.
 """
 
 from abms.comfort import clo_for_month, pmv

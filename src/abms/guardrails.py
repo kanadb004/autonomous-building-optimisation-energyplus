@@ -1,7 +1,5 @@
-"""Deterministic setpoint validator/clamper (§2.4). Every controller's
-decision -- rule-based today, LLM in Phase 4 -- passes through here before
-being written to actuators. Every clamp/rejection is logged with a reason
-so the decision log carries requested vs. applied values.
+"""Setpoint clamping. Every controller decision passes through here before
+it reaches an actuator, and every clamp is logged with a reason.
 """
 
 from dataclasses import dataclass, field
@@ -13,9 +11,7 @@ COOLING_MAX_C = 32.0
 MIN_DEADBAND_C = 1.0
 MAX_STEP_C = 3.0
 
-# Occupied-hours comfort floor: enforced regardless of what the controller
-# asked for (§2.4) -- this is the one guardrail that overrides everything
-# else, applied last.
+# Applied last, and overrides everything above it.
 OCCUPIED_HEAT_FLOOR_C = 20.0
 OCCUPIED_COOL_CEILING_C = 26.0
 
@@ -39,11 +35,12 @@ def validate(
     prev_cooling_c: float,
     occupied: bool,
 ) -> GuardrailResult:
-    """Clamp a requested (heating_c, cooling_c) decision. `prev_*_c` are the
-    last *applied* setpoints (for the max-step-per-decision rule); `occupied`
-    gates the comfort-floor override. Returns the values to actually write to
-    the actuators plus a human-readable note per clamp applied (empty list =
-    the request passed through unmodified)."""
+    """Clamp a requested decision.
+
+    prev_*_c are the last applied setpoints, used by the max-step rule.
+    Returns the values to write plus one note per clamp; an empty note
+    list means the request passed through untouched.
+    """
     notes = []
     heating_c = requested_heating_c
     cooling_c = requested_cooling_c

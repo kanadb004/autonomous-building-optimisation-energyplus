@@ -1,11 +1,8 @@
-"""Quantitative savings dashboard (GC-6, docs/GAP_CLOSURE_PLAN.md §2 Phase
-GC-6). A pure reader of `runs/demo_final/` -- never imports `abms.simulation`,
-`abms.mcp_server`, or anything that touches EnergyPlus, so a dashboard crash
-can never affect a simulation run in progress. `abms.metrics` / `abms.carbon`
-/ `abms.comfort` are fine to import: pure math, computed once when the
-committed runs were regenerated (`scripts/regenerate_summaries.py`), never
-recomputed here -- every stat tile reads its value verbatim from the
-committed `summary.json`.
+"""Savings dashboard. Reads runs/demo_final/ and nothing else.
+
+It deliberately never imports anything that touches EnergyPlus, so a crash
+here can't disturb a running simulation. Stat tiles read their values
+straight from the committed summary.json rather than recomputing them.
 """
 
 from pathlib import Path
@@ -20,28 +17,23 @@ from abms.guardrails import OCCUPIED_COOL_CEILING_C, OCCUPIED_HEAT_FLOOR_C
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNS_ROOT = REPO_ROOT / "runs" / "demo_final"
 
-# Fixed categorical order (dataviz skill: assign hues in fixed order, never
-# cycled) -- one identity per mode, reused across every chart in this app.
+# One colour per mode, reused across every chart.
 MODE_COLORS = {
-    "ai": "#2a78d6",         # slot 1 blue -- the system under evaluation
-    "baseline": "#eb6834",   # slot 2 orange -- the reference to beat
-    "rulebased": "#1baf7a",  # slot 3 aqua -- the non-LLM comparison point
+    "ai": "#2a78d6",
+    "baseline": "#eb6834",
+    "rulebased": "#1baf7a",
 }
 MODE_LABELS = {"ai": "AI", "baseline": "Baseline", "rulebased": "Rule-based"}
-BAND_FILL = "rgba(225,224,217,0.55)"  # neutral gridline gray, low-opacity band
-GAP_FILL = "rgba(42,120,214,0.12)"    # AI series hue, low-opacity gap shade
+BAND_FILL = "rgba(225,224,217,0.55)"
+GAP_FILL = "rgba(42,120,214,0.12)"
 MUTED_INK = "#898781"
 
 st.set_page_config(page_title="Autonomous Building Optimization: Savings Dashboard", layout="wide")
 
 
-# ---------------------------------------------------------------------------
-# Data layer (GC-6.1). Every loader tolerates a missing mode/file/field by
-# returning None -- callers degrade the corresponding section instead of
-# crashing, since summaries from different phases may have different field
-# sets (extended_january has no rulebased dir; older summaries may predate
-# a metric).
-# ---------------------------------------------------------------------------
+# Data layer. Loaders return None for a missing mode, file or field so the
+# page can degrade a section rather than crash: not every run has every
+# mode, and older summaries may lack newer metrics.
 
 
 def discover_periods() -> list:
@@ -100,9 +92,7 @@ def available_modes(period: str) -> list:
     return [m for m in ("baseline", "rulebased", "ai") if (RUNS_ROOT / period / m / "telemetry.csv").is_file()]
 
 
-# ---------------------------------------------------------------------------
-# Header + period selector (GC-6.2)
-# ---------------------------------------------------------------------------
+# Header and period selector
 
 st.title("Autonomous Building Optimization: Quantitative Savings Dashboard")
 st.caption("Pure reader of `runs/demo_final/`; every number below comes verbatim from a committed `summary.json`.")
@@ -137,9 +127,7 @@ def fmt(value, digits=1, suffix="") -> str:
         return "N/A"
 
 
-# ---------------------------------------------------------------------------
-# Stat tiles (GC-6.2)
-# ---------------------------------------------------------------------------
+# Stat tiles
 
 st.subheader(f"{period}: headline results")
 tiles = st.columns(6)
@@ -179,9 +167,7 @@ with tiles[5]:
 
 st.divider()
 
-# ---------------------------------------------------------------------------
-# Cumulative energy chart (GC-6.3)
-# ---------------------------------------------------------------------------
+# Cumulative energy chart
 
 st.subheader("Cumulative HVAC energy")
 
@@ -243,9 +229,7 @@ else:
 
 st.divider()
 
-# ---------------------------------------------------------------------------
-# Comfort + setpoint chart (GC-6.4)
-# ---------------------------------------------------------------------------
+# Comfort and setpoint chart
 
 st.subheader("Comfort band vs setpoints: representative day")
 
@@ -306,9 +290,7 @@ else:
 
 st.divider()
 
-# ---------------------------------------------------------------------------
-# Decision feed (GC-6.5)
-# ---------------------------------------------------------------------------
+# Decision feed
 
 st.subheader("Decision feed: autonomy and self-correction evidence")
 
@@ -355,11 +337,7 @@ else:
 
 st.divider()
 
-# ---------------------------------------------------------------------------
-# Carbon shift chart (GC-6.6, only if time remains -- included here since
-# it reuses abms.carbon's already-computed intensity profile with no new
-# math in the dashboard)
-# ---------------------------------------------------------------------------
+# Carbon shift chart, reusing the intensity profile from abms.carbon.
 
 st.subheader("Carbon-aware load shift")
 

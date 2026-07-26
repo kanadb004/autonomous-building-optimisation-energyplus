@@ -1,15 +1,11 @@
-"""LLM agent core (§4.1-§4.2, §4.4): prompt construction, the Ollama call,
-and malformed-JSON repair-retry. v1.1 scope, fixed by docs/PROJECT_PLAN.md
-§4.1 (not revisited): structured-output mode only -- this module builds one
-prompt from state already gathered by the caller and returns one parsed
-JSON decision. It does not call MCP tools itself and knows nothing about
-asyncio; the MCP client loop that gathers state and submits the decision
-lives in `agent_runner.py`, so this module stays unit-testable without a
-live sim or a live model.
+"""Prompt building, the Ollama call, and the repair retry.
 
-Each call is a fresh, stateless conversation (§6 trap #6) -- callers must
-not accumulate messages across decisions; a short rolling history is passed
-in as data (`get_recent_history`'s output), not as prior chat turns.
+This module takes state the caller already gathered and returns one parsed
+decision. It doesn't touch MCP or asyncio, which keeps it testable without
+a live simulation or a live model; that loop lives in agent_runner.
+
+Every call is a fresh conversation. Recent history is passed in as data,
+never as accumulated chat turns.
 """
 
 import json
@@ -25,10 +21,8 @@ SYSTEM_PROMPT_PATH = REPO_ROOT / "prompts" / "controller_system.md"
 
 
 class OllamaUnavailableError(RuntimeError):
-    """Raised when Ollama cannot be reached at all (connection refused) --
-    distinct from a malformed reply, per §4.4's two separate fallback
-    paths. Callers should fall back immediately rather than retrying, since
-    a downed Ollama server won't recover mid-retry."""
+    """Ollama could not be reached. Fall back rather than retry; a downed
+    server won't recover mid-retry."""
 
 
 def load_system_prompt() -> str:
@@ -36,11 +30,8 @@ def load_system_prompt() -> str:
 
 
 def render_feedback_block(previous_feedback: dict | None) -> str:
-    """Renders the guardrail-feedback self-correction block (GC-4a, plan
-    §2): the previous cycle's `write_result` (requested/applied/
-    guardrail_notes) turned into a short block telling the model what
-    happened last time, so it can adapt. Returns "" when there is no
-    previous decision (first decision of a session)."""
+    """Tell the model what the guardrails did to its last decision, so it
+    can adapt. Empty on the first decision of a session."""
     if previous_feedback is None:
         return ""
     requested = previous_feedback.get("requested")
@@ -59,15 +50,13 @@ def render_feedback_block(previous_feedback: dict | None) -> str:
         )
     return (
         f"Your previous decision (heating={applied.get('heating_c')} "
-        f"cooling={applied.get('cooling_c')}) was applied unmodified -- no safety-layer adjustment needed.\n"
+        f"cooling={applied.get('cooling_c')}) was applied unmodified; no adjustment was needed.\n"
     )
 
 
 def build_user_prompt(state: dict, goals: dict, history: dict, previous_feedback: dict | None = None) -> str:
-    """Packs the three MCP read-tool responses into one compact JSON blob
-    for the model (§4.1: "the runner...packs the state into the prompt"),
-    preceded by the guardrail-feedback self-correction block (GC-4a) when
-    a previous decision exists."""
+    """Pack the three read-tool responses into one JSON blob for the
+    model, after the guardrail feedback block."""
     payload = {
         "current_state": state,
         "goals_and_constraints": goals,
@@ -93,9 +82,8 @@ REPAIR_PROMPT_TEMPLATE = (
 
 
 class LLMAgent:
-    """Model-agnostic (§1.2): everything model-specific is the `model`
-    string and `host`, both overridable via config/env with no code
-    change (see `abms.config.llm_agent_config`)."""
+    """Everything model-specific is the model string and the host, both
+    settable from config or env."""
 
     def __init__(
         self,
@@ -115,9 +103,8 @@ class LLMAgent:
 
     @property
     def client(self) -> ollama.Client:
-        """Exposed so `agent_runner`'s native tool-calling mode (GC-4b) can
-        reuse the same configured Ollama client (model/host/timeout) for its
-        own `tools=` chat calls, instead of constructing a second one."""
+        """Exposed so native tool-calling mode can reuse this client
+        instead of building a second one."""
         return self._client
 
     @property
@@ -127,14 +114,15 @@ class LLMAgent:
     def propose(
         self, state: dict, goals: dict, history: dict, previous_feedback: dict | None = None
     ) -> Decision:
-        """Returns a validated `Decision`. Raises `OllamaUnavailableError`
-        if the model can't be reached at all, or `DecisionParseError` if
-        every reply (original call + repair retries) was malformed --
-        callers treat both as "use the fallback for this decision" but may
-        want to log them differently (§4.4). `previous_feedback` is the
-        prior cycle's `write_result` (requested/applied/guardrail_notes),
-        or None on the first decision of a session -- it drives the
-        guardrail-feedback self-correction block (GC-4a)."""
+        """Return a validated Decision.
+
+        Raises OllamaUnavailableError if the model can't be reached, or
+        DecisionParseError if every reply was malformed. Callers fall back
+        on either, though they may want to log them differently.
+
+        previous_feedback is the last cycle's write result, or None on the
+        first decision.
+        """
         messages = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": build_user_prompt(state, goals, history, previous_feedback)},
@@ -160,20 +148,13 @@ class LLMAgent:
                 options={"temperature": self.temperature},
             )
         except ConnectionError as e:
-            # ollama-py raises the builtin ConnectionError (verified against
-            # the installed 0.6.2 client) when it can't reach the host at
-            # all -- a bad model name or other server-side error surfaces as
-            # a different exception type and is deliberately NOT caught
-            # here, since that's a config bug, not the runtime-robustness
-            # case §4.4 asks for.
+            # ollama-py raises the builtin ConnectionError when the host is
+            # unreachable. A bad model name raises something else and is
+            # deliberately not caught here; that's a config bug.
             raise OllamaUnavailableError(f"could not reach Ollama: {e}") from e
         except httpx.TransportError as e:
-            # Unlike a refused connection, ollama-py does NOT rewrap timeouts
-            # (read/connect/pool) into ConnectionError -- verified against
-            # the installed client's source, which only catches
-            # httpx.ConnectError. A slow/overloaded Ollama (e.g. a cold
-            # model load, or CPU contention from something else on the
-            # machine) must fail the same way a refused connection does,
-            # not crash the whole run.
+            # Timeouts aren't rewrapped into ConnectionError, so catch them
+            # separately. A slow Ollama should fail like a refused one
+            # rather than kill the run.
             raise OllamaUnavailableError(f"Ollama request failed: {e}") from e
         return response["message"]["content"]

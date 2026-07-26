@@ -1,16 +1,17 @@
-"""Minimal IDF text patching -- avoids a full IDF-parser dependency for the
-one thing Phase 2+ needs: swapping the `RunPeriod` window so dev/demo/season
-variants don't require hand-maintained IDF copies (§2 Phase 4.4 calls run
-period out as "a single config value").
+"""Minimal IDF text patching.
+
+Only swaps the RunPeriod window, which saves keeping a hand-maintained IDF
+copy per season and avoids pulling in a full IDF parser.
 """
 
 from pathlib import Path
 
 
 def with_run_period(idf_path, begin_month: int, begin_day: int, end_month: int, end_day: int, output_path) -> Path:
-    """Write a copy of `idf_path` to `output_path` with the `RunPeriod`
-    object's Begin/End Month/Day fields replaced. Fails loudly if the
-    `RunPeriod,` object can't be found, rather than silently no-op-ing."""
+    """Copy the IDF with the RunPeriod begin/end dates replaced.
+
+    Raises if there's no RunPeriod object rather than quietly doing nothing.
+    """
     lines = Path(idf_path).read_text().splitlines(keepends=True)
 
     start = None
@@ -19,7 +20,7 @@ def with_run_period(idf_path, begin_month: int, begin_day: int, end_month: int, 
             start = i
             break
     if start is None:
-        raise RuntimeError("RunPeriod object not found in IDF -- cannot patch run period")
+        raise RuntimeError("RunPeriod object not found in IDF")
 
     end = None
     for i in range(start + 1, len(lines)):
@@ -27,10 +28,10 @@ def with_run_period(idf_path, begin_month: int, begin_day: int, end_month: int, 
             end = i
             break
     if end is None:
-        raise RuntimeError("RunPeriod object has no terminating ';' -- malformed IDF")
+        raise RuntimeError("RunPeriod object has no terminating ';'")
 
-    # Fields, in order, after the object keyword line: Name, Begin Month,
-    # Begin Day of Month, Begin Year, End Month, End Day of Month, ...
+    # Field order after the keyword line: Name, Begin Month, Begin Day,
+    # Begin Year, End Month, End Day.
     field_lines = lines[start + 1 : end + 1]
     replacements = {1: begin_month, 2: begin_day, 4: end_month, 5: end_day}
 

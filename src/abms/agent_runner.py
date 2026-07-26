@@ -1,19 +1,12 @@
-"""The AI agent runner (§4.1, §6): the MCP *client* side of the closed
-loop. Spawns `abms.mcp_server` as a stdio subprocess (the same tested
-Phase 3 server -- sim and MCP server share one process; this runner is a
-separate process talking to it over stdio, exactly like
-`scripts/test_mcp_handshake.py`), and at every decision point calls the
-read-tools, asks the LLM agent (`controllers/llm_agent.py`) for a decision,
-and submits it via the write-tool.
+"""MCP client side of the loop.
 
-Robustness (§4.4), built on top of the Phase 3 handshake rather than
-duplicating it: a malformed-JSON-after-retry or an unreachable Ollama both
-result in this runner computing the same rule-based decision the sim
-thread would fall back to on timeout, and submitting it itself (with a
-reasoning string explaining why) -- so a decision is never late waiting out
-the full handshake timeout just because Ollama is down. The handshake's own
-60s timeout (§3.3) remains the second line of defense in case this process
-itself dies or hangs.
+Spawns abms.mcp_server as a stdio subprocess. At each decision point it
+reads state, asks the LLM for setpoints, and submits them.
+
+If Ollama is down or its output won't parse, the runner computes the
+rule-based decision itself and submits that, so a decision never waits out
+the server's handshake timeout. That timeout is still there as a backstop
+in case this process dies.
 """
 
 import argparse
@@ -38,35 +31,23 @@ DEFAULT_IDF = REPO_ROOT / "models" / "building.idf"
 DEFAULT_EPW = REPO_ROOT / "models" / "weather" / "USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw"
 
 POLL_INTERVAL_S = 0.5
-# How long to wait, with no sim-time movement at all, before concluding the
-# simulation has ended (or hung) and it's time to disconnect -- generous
-# relative to the handshake timeout since a stalled poll is not itself a
-# fault, just the signal this runner uses to know when to stop.
+# No sim-time movement for this long means the run has ended, or hung.
 STALL_TIMEOUT_S = 120.0
 
-# GC-4b native tool-calling mode. Bounded agentic loop per decision -- a cap,
-# not a target, so a model that never converges on set_zone_setpoints can't
-# hang a decision forever; the caller falls through to structured mode
-# instead (three-layer fallback: native -> structured -> rule-based).
+# Cap on tool-calling rounds per decision, so a model that never calls
+# set_zone_setpoints can't hang the loop.
 NATIVE_MAX_ROUNDS = 6
-# Native decisions cost 2-4 completions at 17-26s each (40-100s) -- plausibly
-# over the 60s handshake timeout, so native sessions launch mcp_server with a
-# larger timeout (docs/GAP_CLOSURE_PLAN.md §2 GC-4b wall-clock note).
+# Native decisions take 2-4 completions, which can outlast the usual 60s
+# handshake timeout, so native sessions start the server with a bigger one.
 NATIVE_TIMEOUT_S = 180.0
 
 
 class NativeToolCallError(RuntimeError):
-    """Raised when the native tool-calling loop fails for any reason -- no
-    tool call in a round, an unknown tool name, missing/invalid arguments to
-    set_zone_setpoints, the round cap, or any other exception. Callers catch
-    this and fall through to the existing structured-mode path for that same
-    decision (GC-4b's first safety net; structured mode's own
-    OllamaUnavailableError/DecisionParseError handling is the second)."""
+    """Native tool-calling failed. Callers fall back to structured mode."""
 
 
 def _mcp_tool_to_ollama(tool) -> dict:
-    """Translates one MCP `Tool` (name/description/inputSchema) into the
-    Ollama chat API's `tools=` function-calling format."""
+    """Convert an MCP tool into Ollama's function-calling format."""
     return {
         "type": "function",
         "function": {
@@ -78,11 +59,8 @@ def _mcp_tool_to_ollama(tool) -> dict:
 
 
 def build_native_system_prompt(structured_prompt: str) -> str:
-    """Native mode reuses the goals/constraints/examples content of the
-    structured-mode system prompt (`prompts/controller_system.md`) verbatim,
-    dropping only the JSON-output section (irrelevant here) in favor of
-    tool-calling instructions -- additive: the prompt file itself is
-    untouched, so structured mode is unaffected."""
+    """Reuse the structured system prompt, swapping the JSON-output section
+    for tool-calling instructions. The prompt file itself is untouched."""
     goals_section = structured_prompt.split("## Required output format")[0]
     return (
         goals_section
@@ -104,13 +82,11 @@ async def run_native_decision(
     system_prompt: str,
     max_rounds: int = NATIVE_MAX_ROUNDS,
 ) -> dict:
-    """One decision cycle in native tool-calling mode (GC-4b §2): the model
-    drives its own MCP tool calls (translated to Ollama's `tools=` format at
-    session start) instead of the runner prefetching state/goals/history.
-    Returns `{"heating_c", "cooling_c", "reasoning", "write_result"}` once
-    `set_zone_setpoints` has been called and accepted. Raises
-    `NativeToolCallError` on any failure so the caller can fall through to
-    structured mode for this same decision."""
+    """One decision with the model driving its own tool calls.
+
+    Returns heating_c, cooling_c, reasoning and the write result once
+    set_zone_setpoints has been accepted.
+    """
     tool_names = {t["function"]["name"] for t in tools_spec}
     messages = [
         {"role": "system", "content": system_prompt},
@@ -202,13 +178,12 @@ async def run_agent_session(
     fallback_controller=None,
     mode: str = "structured",
 ) -> dict:
-    """Drives one full AI-controlled simulation to completion. Returns a
-    small run report (decisions made, how many used the LLM vs a runner-
-    side fallback, and why). Stops once `max_decisions` decisions have been
-    made (the run period, translated to an expected decision count by the
-    caller -- §4.4's config-driven demo period) or the sim goes quiet for
-    `STALL_TIMEOUT_S` (end of run, or a hang either MCP-side handshake
-    timeout should already have prevented)."""
+    """Run one AI-controlled simulation to completion.
+
+    Returns a report of how many decisions were made and how many came
+    from the LLM rather than a fallback. Stops after max_decisions, or
+    when the simulation goes quiet for STALL_TIMEOUT_S.
+    """
     fallback_controller = fallback_controller or RuleBasedController()
 
     params = StdioServerParameters(
@@ -353,12 +328,11 @@ async def run_agent_session(
 
 
 def build_llm_agent(overrides: dict | None = None) -> tuple[LLMAgent, int, str]:
-    """Loads `config/default.yaml`'s `llm_agent` section (env-overridable
-    per §1.2), returns a constructed `LLMAgent` plus `history_hours`
-    (not an `LLMAgent` constructor arg -- it's how much `get_recent_history`
-    the runner asks for) plus `mode` (GC-4b, "structured" | "native", also
-    not an `LLMAgent` constructor arg -- it's how `run_agent_session`
-    decides whether to attempt native tool-calling before structured)."""
+    """Build the LLMAgent from config.
+
+    history_hours and mode are returned separately because they belong to
+    the runner, not to the agent's constructor.
+    """
     cfg = config.llm_agent_config()
     cfg.update(overrides or {})
     history_hours = cfg.pop("history_hours")
@@ -379,8 +353,7 @@ def main(argv=None) -> int:
         "--mode",
         choices=["structured", "native"],
         default=None,
-        help="Overrides config/default.yaml's llm_agent.mode (GC-4b). Structured is production; "
-        "native is a time-boxed showcase mode.",
+        help="Overrides llm_agent.mode in config/default.yaml.",
     )
     args = parser.parse_args(argv)
 
@@ -388,9 +361,7 @@ def main(argv=None) -> int:
     decision_interval = args.decision_interval_minutes or cfg["decision_interval_minutes"]["llm"]
     llm_agent, history_hours, config_mode = build_llm_agent()
     mode = args.mode or config_mode
-    # Native decisions run 2-4 completions per decision (40-100s) -- raise
-    # the handshake timeout so a native decision can't outlive it (GC-4b
-    # wall-clock note); structured mode keeps the existing 60s default.
+    # Native mode needs the longer timeout; structured keeps the 60s default.
     timeout_s = args.timeout_s if args.timeout_s is not None else (NATIVE_TIMEOUT_S if mode == "native" else 60.0)
     max_decisions = expected_decision_count(args.period_days, decision_interval) + 2  # small buffer
 

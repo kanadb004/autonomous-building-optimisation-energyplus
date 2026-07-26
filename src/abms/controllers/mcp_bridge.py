@@ -1,8 +1,7 @@
-"""The MCP-driven controller (§3.3): plugs an in-process `DecisionHandshake`
-into the `Controller` interface `SimulationRunner` already knows how to
-drive. `decide()` is called on the sim thread at each decision point; it
-blocks inside the handshake until an MCP client calls `set_zone_setpoints`,
-or the timeout fires and a fallback controller's decision is used instead.
+"""Plugs the decision handshake into the Controller interface.
+
+decide() runs on the sim thread and blocks until an MCP client calls
+set_zone_setpoints, or until the timeout fires and the fallback is used.
 """
 
 from abms.controllers.base import Controller
@@ -16,9 +15,8 @@ class MCPBridgeController(Controller):
     def __init__(self, handshake: DecisionHandshake, fallback_controller: Controller):
         self.handshake = handshake
         self.fallback_controller = fallback_controller
-        # Read by SimulationRunner._log_decision right after decide()
-        # returns, so the MCP client's reasoning text (if any) lands in
-        # decisions.jsonl (§4.3). None on the timeout/fallback path.
+        # Read straight after decide() so the client's reasoning reaches
+        # decisions.jsonl. None on the fallback path.
         self.last_reasoning = None
 
     def decide(self, snapshot: dict):

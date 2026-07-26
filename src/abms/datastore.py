@@ -1,9 +1,7 @@
-"""Thread-safe shared state store (§3.1): the sim thread pushes every
-zone-timestep record here via `SimulationRunner`'s `on_state`/`on_decision`
-hooks; MCP tool handlers (running on the asyncio event loop, same process --
-see §3 architecture decision) read from it. All access goes through a single
-lock; callers get back copies, never references into the store, so a tool
-handler can't accidentally mutate shared state.
+"""Thread-safe store shared between the sim thread and the tool handlers.
+
+Everything goes through one lock, and callers get copies rather than
+references, so a tool handler can't mutate shared state by accident.
 """
 
 import threading
@@ -23,7 +21,7 @@ class SharedState:
         self._last_decision = None
 
     def update(self, record: dict) -> None:
-        """Called once per zone timestep (`on_state`)."""
+        """Called once per zone timestep."""
         with self._lock:
             self._latest = record
             self._history.append(record)
@@ -35,9 +33,8 @@ class SharedState:
             self._history.popleft()
 
     def record_decision(self, entry: dict) -> None:
-        """Called once per decision (`on_decision`) -- separate from
-        `update` because decisions happen far less often than zone
-        timesteps."""
+        """Called once per decision. Separate from update because
+        decisions are far rarer than timesteps."""
         with self._lock:
             self._decisions_count += 1
             self._last_decision = entry

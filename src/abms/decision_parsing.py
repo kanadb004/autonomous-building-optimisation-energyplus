@@ -1,9 +1,8 @@
-"""Malformed-LLM-output handling (§4.4, §6 trap #7): validates the LLM's
-JSON decision object against a strict schema. Guardrail *value* clamping
-(absurd-but-well-typed setpoints) happens later, in guardrails.py -- this
-module only rejects structurally invalid replies (bad JSON, missing/
-wrong-typed fields, non-finite numbers) so the runner's repair-retry-then-
-fallback logic (§4.1, §4.4) has one narrow failure signal to act on.
+"""Validates the LLM's JSON decision against a strict schema.
+
+Only structural problems are rejected here: bad JSON, missing or
+wrong-typed fields, non-finite numbers. Clamping well-formed but silly
+values is guardrails.py's job.
 """
 
 import json
@@ -14,8 +13,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
 class DecisionParseError(ValueError):
-    """Raised when the model's raw reply cannot be turned into a valid
-    Decision -- malformed JSON, missing fields, or non-finite numbers."""
+    """The model's reply could not be turned into a valid Decision."""
 
 
 class Decision(BaseModel):
@@ -35,12 +33,12 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def parse_decision(raw_text: str) -> Decision:
-    """Parse and validate one LLM reply. Tries a strict `json.loads` first;
-    if the model wrapped the object in stray prose or markdown fences
-    despite the JSON-mode request, falls back to extracting the first
-    `{...}` block before giving up. Raises `DecisionParseError` with a
-    human-readable reason on any failure -- the caller (llm_agent.py) uses
-    that message both for its repair-retry prompt and for logging."""
+    """Parse and validate one LLM reply.
+
+    Tries json.loads first, then falls back to pulling out the first
+    {...} block if the model wrapped it in prose or markdown fences. The
+    error message is reused in the repair-retry prompt.
+    """
     text = (raw_text or "").strip()
     if not text:
         raise DecisionParseError("reply was empty")

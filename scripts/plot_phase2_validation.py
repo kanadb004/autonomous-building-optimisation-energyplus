@@ -1,8 +1,6 @@
-"""Phase 2 validation plot: one representative day, rule-based run --
-zone temperature vs. heating/cooling setpoints, showing the setpoints step
-when occupancy changes and the zone temperature visibly follows (§2
-validation: "setpoint changes visibly take effect in the temperature
-traces")."""
+"""Plots one day of the rule-based run: zone temperature against the
+heating and cooling setpoints, so you can see the setpoints step with
+occupancy and the temperature follow."""
 
 import csv
 import sys

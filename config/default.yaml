@@ -1,32 +1,27 @@
-# Default run configuration (§2 Phase 2, §3 repo structure). Values here are
-# read by src/abms/orchestrator.py; guardrail bounds are also hardcoded as
-# constants in guardrails.py (single source of truth -- this file documents
-# them for humans, not a second place code reads them from, to avoid drift).
+# Read by src/abms/orchestrator.py. The guardrail bounds below are also
+# constants in guardrails.py, which is where the code reads them from; they
+# are repeated here for reference only.
 
 building_idf: models/building.idf
 weather_file: models/weather/USA_IL_Chicago-OHare.Intl.AP.725300_TMY3.epw
 
-# Decision-interval gating (§2.3): controllers are consulted only every N
-# simulation minutes, not every zone timestep (4 timesteps/hour = 15 sim-min
-# in this model, per Timestep,4; in building.idf).
+# How often controllers are consulted, in simulation minutes. The model
+# runs 4 timesteps an hour, so 15 minutes is one timestep.
 decision_interval_minutes:
   rulebased: 15
   llm: 60
 
-# Rule-based controller setpoints (°C) -- occupancy-based setback (§2.2).
-# Deeper than the baseline's fixed weekly setback schedule (18.0/27.0
-# unoccupied, models/building.idf), and driven by real per-timestep
-# occupancy rather than a static 6:00-20:00 window -- the actual occupancy
-# schedule (OCCUPY-1) runs ~8:00-19:00, so this also avoids the baseline's
-# wasted conditioning during the 6-8am/7-8pm margins where the static
-# schedule assumes occupied but the building is empty (§2.5 validation).
+# Rule-based setpoints in C. Deeper than the IDF's own 18.0/27.0 setback,
+# and driven by real occupancy rather than a static 6:00-20:00 window. The
+# occupancy schedule actually runs about 8:00-19:00, so this avoids
+# conditioning an empty building at the edges of the day.
 rulebased_controller:
   occupied_heat_c: 21.0
   occupied_cool_c: 24.0
   unoccupied_heat_c: 18.3
   unoccupied_cool_c: 28.0
 
-# Guardrail bounds (§2.4) -- mirrored as constants in guardrails.py.
+# Mirrored as constants in guardrails.py.
 guardrails:
   heating_min_c: 12.0
   heating_max_c: 23.0
@@ -37,58 +32,36 @@ guardrails:
   occupied_heat_floor_c: 20.0
   occupied_cool_ceiling_c: 26.0
 
-# Comfort compliance band used by metrics.py for the "occupied-hours comfort
-# compliance %" figure -- intentionally the same numbers as the guardrail
-# occupied floor/ceiling, since that floor *is* the comfort promise.
+# Same numbers as the guardrail floor and ceiling, deliberately: that floor
+# is the comfort promise, so metrics should measure against it.
 comfort_band:
   occupied_heat_min_c: 20.0
   occupied_cool_max_c: 26.0
 
-# Peak-demand threshold (GC-2, docs/GAP_CLOSURE_PLAN.md §2 Phase GC-2) --
-# derived empirically, not guessed: baseline january_week peaks at
-# ~0.42 kW interval-average HVAC electricity, july_week at ~0.64 kW (this
-# 5-zone packaged-rooftop model is electricity-light in winter since setback
-# savings land mostly on the gas reheat coil, per total_hvac_kwh's
-# docstring). Threshold = 80% of the higher of the two (0.8 * 0.64 =
-# 0.51 kW), rounded to a clean number. Derivation recorded in
-# docs/decisions.md.
+# Measured, not guessed: baseline january_week peaks near 0.42 kW and
+# july_week near 0.64 kW, so this is 80% of the higher one, rounded.
 peak_demand_kw_threshold: 0.5
 
-# LLM agent runner (§4.1-§4.2). model/host default here, overridden by the
-# OLLAMA_MODEL/OLLAMA_HOST env vars if set (see .env.example) so a larger
-# model can be swapped in without editing this file (§1.2 model-agnostic
-# requirement). qwen2.5:3b-instruct, not the plan's 7b recommendation, per
-# the Phase 0 network-constrained deviation recorded in docs/decisions.md.
+# model and host can be overridden by OLLAMA_MODEL and OLLAMA_HOST.
 llm_agent:
   model: qwen2.5:3b-instruct
   host: http://localhost:11434
   temperature: 0.2
-  # Measured single-completion latency for the full state+goals+history
-  # prompt (not the Phase 0 toy prompt) is ~17-26s on this machine; margin
-  # kept generous since a slow decision must hit this timeout and fall back
-  # cleanly (§4.4), not hang the run.
+  # A full prompt takes about 17-26s on this machine. The margin is
+  # generous so a slow decision falls back cleanly instead of hanging.
   request_timeout_s: 45
   keep_alive: "10m"
   max_repair_retries: 1
   history_hours: 6
-  # Decision mode (GC-4b, docs/GAP_CLOSURE_PLAN.md §2 Phase GC-4b). "structured"
-  # (default, production) is the mode validated across the whole demo and
-  # extended-run corpus: agent_runner prefetches state/goals/history and asks
-  # for one JSON decision. "native" lets the model drive its own MCP tool
-  # calls via Ollama's tools= parameter, bounded to a short showcase run only
-  # -- see docs/decisions.md for the GC-4b outcome. Default stays "structured";
-  # switch with --mode native or this key, never both disagreeing silently.
+  # structured prefetches state and asks for one JSON decision, and is what
+  # the demo and extended runs used. native lets the model drive its own
+  # tool calls. Override with --mode.
   mode: structured
 
-# Demo run period(s) (§4.4): a wall-clock budget of ~5-10s/decision at a
-# 60 sim-minute decision interval means an annual AI run is hours of
-# wall-clock; two contrasting one-week periods (winter heating-dominated,
-# summer cooling-dominated) is the default demo scope, chosen here as a
-# config value specifically so it isn't hardcoded into orchestrator.py --
-# a longer run (e.g. a full season, overnight) is a config edit, not a
-# code change. Each period patches models/building.idf's RunPeriod object
-# (src/abms/idf_utils.with_run_period) rather than requiring separate
-# committed IDF copies.
+# At roughly 5-10s per decision, an annual run would take hours, so the
+# default is two contrasting weeks. It lives here rather than in
+# orchestrator.py so a longer run is a config edit. Each period patches the
+# IDF's RunPeriod instead of needing its own committed copy.
 demo_periods:
   - label: january_week
     begin_month: 1

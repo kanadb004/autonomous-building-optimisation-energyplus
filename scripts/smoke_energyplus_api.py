@@ -1,6 +1,5 @@
-"""Phase 0 smoke check: import pyenergyplus from the EnergyPlus install (not
-pip) and run 1ZoneUncontrolled.idf through the Python API into a scratch
-output dir. Re-runnable after any environment change."""
+"""Smoke check: import pyenergyplus from the EnergyPlus install and run a
+trivial model through the API. Re-run after any environment change."""
 
 import sys
 from pathlib import Path

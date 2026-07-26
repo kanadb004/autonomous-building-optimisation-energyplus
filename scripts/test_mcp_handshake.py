@@ -1,16 +1,13 @@
-"""Phase 3 validation (§3.4, PROJECT_PLAN.md validation-before-Phase-4):
-a scripted MCP client, talking to `abms.mcp_server` over stdio as a real
-subprocess, exercises the full decision handshake two ways:
+"""Exercises the decision handshake against a real mcp_server subprocess.
 
-1. Happy path: get_building_state -> set_zone_setpoints -> the sim advances
-   -> the next get_building_state reflects the applied setpoints.
-2. Timeout path: the client deliberately never responds to a pending
-   decision; the handshake's wall-clock timeout fires, the rule-based
-   fallback controller's decision is applied instead, and the sim proceeds
-   -- it never hangs.
+Two paths:
 
-Prints a full transcript (every tool call and response, plus the server's
-stderr) to stdout so it can be captured as validation evidence.
+1. Happy: get_building_state, set_zone_setpoints, then check the next
+   get_building_state reflects the applied setpoints.
+2. Timeout: never answer a pending decision, and check the fallback
+   controller's decision is applied and the run continues.
+
+Prints every call and response so the output can be kept as evidence.
 """
 
 import asyncio

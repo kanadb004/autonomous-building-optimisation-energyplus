@@ -1,6 +1,5 @@
-"""Phase 0 smoke check: verify Ollama serves the chosen model and returns a
-structured JSON reply to a toy prompt; measure single-completion latency
-(feeds the decision-interval choice in Phase 4)."""
+"""Smoke check: Ollama serves the model, returns JSON, and how long one
+completion takes."""
 
 import json
 import os

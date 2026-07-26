@@ -1,15 +1,11 @@
-"""Recompute summary.json for every committed demo period from the already-
-committed telemetry (GC-3.5, docs/GAP_CLOSURE_PLAN.md §2 Phase GC-3). No
-simulation runs here -- this picks up new metrics fields (GC-2 peak-demand,
-GC-3 PMV) retroactively.
+"""Recompute summary.json for each committed period from its telemetry.
 
-Regression gate (§6, §9.6 failure mode 4): pre-existing summary.json fields
-must come out byte-identical to what was already committed -- only new
-fields are expected to appear. This script prints a field-level diff against
-the previous summary.json before overwriting, so a metrics regression is
-caught here rather than silently committed.
+Nothing is simulated here; this just picks up metrics added since the runs
+were made. Existing fields must come out unchanged, so the script prints a
+field-level diff before overwriting and a regression shows up here rather
+than in a commit.
 
-Usage: PYTHONPATH=src python scripts/regenerate_summaries.py
+    PYTHONPATH=src python scripts/regenerate_summaries.py
 """
 
 import json

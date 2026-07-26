@@ -1,6 +1,7 @@
-"""Guardrail clamp/deadband/step/occupied-floor tests (§7: "the most
-important tests in the repo"). Every clamp branch in guardrails.validate
-gets a case where it should NOT fire and a case where it MUST fire."""
+"""Guardrail tests: bounds, deadband, step limit, occupied floor.
+
+Every clamp gets a case where it should fire and one where it shouldn't.
+"""
 
 import sys
 from pathlib import Path

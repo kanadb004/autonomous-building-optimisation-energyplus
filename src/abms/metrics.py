@@ -1,8 +1,6 @@
-"""Energy/comfort/carbon comparison + summary.json writer (§2.5).
+"""Energy, comfort and carbon comparison, and the summary.json writer.
 
-Reads two telemetry CSVs (baseline, controlled) produced by
-`SimulationRunner`, computes total HVAC energy, occupied-hours comfort-band
-compliance, and carbon accounting, and writes a comparison summary.
+Reads the telemetry CSVs written by SimulationRunner and compares them.
 """
 
 import csv
@@ -15,13 +13,11 @@ from abms.comfort import pmv_for_zone
 from abms.guardrails import OCCUPIED_COOL_CEILING_C, OCCUPIED_HEAT_FLOOR_C
 from abms.telemetry import ZONE_NAMES
 
-# ASHRAE 55 comfort criterion for PMV (GC-3.2): |PMV| <= this is "within".
+# ASHRAE 55: |PMV| at or below this counts as comfortable.
 PMV_COMFORT_THRESHOLD = 0.5
 
-# Fallback interval length (sim-minutes) when fewer than two rows are
-# available to derive it from -- matches this model's Timestep,4 (15
-# sim-min/zone-timestep). The telemetry schema is frozen (§0.2), so this is
-# derived from consecutive timestamps rather than stored as a column.
+# Used when there are too few rows to derive the interval from timestamps.
+# Matches this model's Timestep,4.
 DEFAULT_INTERVAL_MINUTES = 15.0
 
 
@@ -31,10 +27,8 @@ def load_telemetry(csv_path) -> list:
 
 
 def interval_minutes(rows: list) -> float:
-    """Zone-timestep length in minutes, derived from the first two
-    telemetry timestamps. Falls back to `DEFAULT_INTERVAL_MINUTES` for the
-    degenerate 0/1-row case (or a non-positive/out-of-order delta), printing
-    a flag so a bad fallback is never silent."""
+    """Timestep length from the first two timestamps. Falls back to the
+    default if there aren't enough rows, and says so."""
     if len(rows) < 2:
         print(f"[metrics] interval_minutes: {len(rows)} row(s), defaulting to {DEFAULT_INTERVAL_MINUTES} min")
         return DEFAULT_INTERVAL_MINUTES
@@ -48,9 +42,8 @@ def interval_minutes(rows: list) -> float:
 
 
 def interval_kwh_to_kw(interval_kwh: float, interval_min: float) -> float:
-    """Average power (kW) implied by an interval energy reading (kWh) over
-    an interval of `interval_min` minutes. The single formula every
-    peak-demand consumer (metrics, MCP server) must share."""
+    """Average kW implied by an interval kWh reading. Everything that deals
+    in peak demand goes through here."""
     return float(interval_kwh) * 60.0 / interval_min
 
 
@@ -63,10 +56,8 @@ def total_gas_kwh(rows: list) -> float:
 
 
 def total_hvac_kwh(rows: list) -> float:
-    """Total site HVAC energy (electricity + gas, both in kWh). A
-    setpoint-only setback strategy mostly saves gas (reheat coil) in a
-    heating-dominated period -- electricity alone understates it (§ Phase 2
-    energy-metric broadening, docs/decisions.md)."""
+    """Electricity plus gas. Setback mostly saves gas in winter, so
+    electricity alone understates the saving."""
     return total_electricity_kwh(rows) + total_gas_kwh(rows)
 
 
@@ -80,10 +71,10 @@ def total_carbon_kg(rows: list) -> float:
 
 
 def comfort_compliance_pct(rows: list) -> float:
-    """% of occupied zone-timesteps where that zone's temperature is within
-    [OCCUPIED_HEAT_FLOOR_C, OCCUPIED_COOL_CEILING_C]. A zone-timestep counts
-    as "occupied" only for the zone(s) actually occupied at that time, not
-    building-wide, since the schedules are shared but occupancy is per-zone."""
+    """Percent of occupied zone-timesteps inside the comfort band.
+
+    Occupancy is counted per zone, not building-wide.
+    """
     occupied_count = 0
     compliant_count = 0
     for r in rows:
@@ -101,11 +92,8 @@ def comfort_compliance_pct(rows: list) -> float:
 
 
 def pmv_stats(rows: list) -> dict:
-    """PMV mean, mean-absolute, and ASHRAE-55 within-band % over occupied
-    zone-timesteps only (same occupancy condition `comfort_compliance_pct`
-    uses). PMV is computed on the fly from zone temp + the timestamp's
-    month via `abms.comfort` -- additive alongside the existing
-    temperature-band metric, which is unchanged."""
+    """PMV mean, mean absolute, and percent within band, over occupied
+    zone-timesteps only."""
     occupied_count = 0
     pmv_sum = 0.0
     pmv_abs_sum = 0.0
@@ -133,8 +121,7 @@ def pmv_stats(rows: list) -> dict:
 
 
 def peak_demand_kw(rows: list, interval_min: float | None = None) -> tuple:
-    """(peak interval-average electricity kW, timestamp of that peak) over
-    `rows`. Returns (0.0, None) for an empty run."""
+    """Peak interval-average kW and when it happened."""
     if not rows:
         return 0.0, None
     im = interval_min if interval_min is not None else interval_minutes(rows)
@@ -147,8 +134,7 @@ def peak_demand_kw(rows: list, interval_min: float | None = None) -> tuple:
 
 
 def pct_intervals_above_threshold(rows: list, threshold_kw: float, interval_min: float | None = None) -> float:
-    """% of zone-timesteps whose interval-average electricity kW exceeds
-    `threshold_kw`."""
+    """Percent of timesteps whose average kW exceeds threshold_kw."""
     if not rows:
         return 0.0
     im = interval_min if interval_min is not None else interval_minutes(rows)
@@ -216,10 +202,11 @@ def _comparison(baseline: dict, controlled: dict) -> dict:
 
 
 def compare_three(baseline_dir, rulebased_dir, ai_dir, peak_demand_kw_threshold: float | None = None) -> dict:
-    """Three-way comparison for the Phase 4 demo runs (§4.5): baseline vs
-    rule-based vs AI, same period/weather. Built on `summarize_run` +
-    `_comparison` (the same pairwise math `compare_runs` uses) rather than
-    duplicating it, so the two-way and three-way summaries never disagree."""
+    """Baseline vs rule-based vs AI over the same period.
+
+    Reuses the pairwise math from compare_runs so the two summaries can't
+    disagree.
+    """
     baseline = summarize_run(baseline_dir, peak_demand_kw_threshold)
     rulebased = summarize_run(rulebased_dir, peak_demand_kw_threshold)
     ai = summarize_run(ai_dir, peak_demand_kw_threshold)
