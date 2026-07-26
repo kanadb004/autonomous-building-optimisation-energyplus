@@ -32,7 +32,7 @@ BAND_FILL = "rgba(225,224,217,0.55)"  # neutral gridline gray, low-opacity band
 GAP_FILL = "rgba(42,120,214,0.12)"    # AI series hue, low-opacity gap shade
 MUTED_INK = "#898781"
 
-st.set_page_config(page_title="Honeywell Campus Connect -- Savings Dashboard", layout="wide")
+st.set_page_config(page_title="Autonomous Building Optimization: Savings Dashboard", layout="wide")
 
 
 # ---------------------------------------------------------------------------
@@ -104,8 +104,8 @@ def available_modes(period: str) -> list:
 # Header + period selector (GC-6.2)
 # ---------------------------------------------------------------------------
 
-st.title("Honeywell Campus Connect -- Quantitative Savings Dashboard")
-st.caption("Pure reader of `runs/demo_final/` -- every number below comes verbatim from a committed `summary.json`.")
+st.title("Autonomous Building Optimization: Quantitative Savings Dashboard")
+st.caption("Pure reader of `runs/demo_final/`; every number below comes verbatim from a committed `summary.json`.")
 
 periods = discover_periods()
 if not periods:
@@ -141,7 +141,7 @@ def fmt(value, digits=1, suffix="") -> str:
 # Stat tiles (GC-6.2)
 # ---------------------------------------------------------------------------
 
-st.subheader(f"{period} -- headline results")
+st.subheader(f"{period}: headline results")
 tiles = st.columns(6)
 
 with tiles[0]:
@@ -247,7 +247,7 @@ st.divider()
 # Comfort + setpoint chart (GC-6.4)
 # ---------------------------------------------------------------------------
 
-st.subheader("Comfort band vs setpoints -- representative day")
+st.subheader("Comfort band vs setpoints: representative day")
 
 modes_with_telemetry = list(cum_frames.keys())
 if not modes_with_telemetry:
@@ -310,7 +310,7 @@ st.divider()
 # Decision feed (GC-6.5)
 # ---------------------------------------------------------------------------
 
-st.subheader("Decision feed -- autonomy and self-correction evidence")
+st.subheader("Decision feed: autonomy and self-correction evidence")
 
 if decisions_df is None or decisions_df.empty:
     st.info("No `decisions.jsonl` for this period's AI run.")
