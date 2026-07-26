@@ -14,6 +14,8 @@ comparison.
 import argparse
 import asyncio
 import datetime
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -109,6 +111,20 @@ def run_full_comparison(
     return summary
 
 
+def _write_manifest(period_dir: Path, source_idf_path: Path, patched_idf_path: Path) -> None:
+    """Records model provenance next to a period's runtime-patched IDF: the
+    source model path and a content hash, so the committed run dir is
+    self-describing without needing a git hash captured from inside the run
+    (`git rev-parse` isn't available there)."""
+    source_hash = hashlib.sha256(source_idf_path.read_bytes()).hexdigest()
+    manifest = {
+        "source_idf": str(source_idf_path.relative_to(REPO_ROOT)),
+        "source_idf_sha256": source_hash,
+        "patched_idf": patched_idf_path.name,
+    }
+    (period_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+
 def _period_days(period: dict) -> float:
     # Arbitrary non-leap reference year -- only the day-count matters, and
     # none of the configured demo periods span Feb 29.
@@ -139,6 +155,7 @@ def run_demo(output_dir: Path, run_id: str) -> dict:
             period["end_day"],
             patched_idf,
         )
+        _write_manifest(period_dir, building_idf, patched_idf)
         results[label] = run_full_comparison(
             period_dir, f"{run_id}_{label}", _period_days(period), patched_idf, weather_file
         )
