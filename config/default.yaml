@@ -1,0 +1,3 @@
+# Placeholder — populated in later phases (run period, decision interval,
+# comfort band, guardrail bounds, emission-factor profile, model paths, run mode).
+run_mode: baseline

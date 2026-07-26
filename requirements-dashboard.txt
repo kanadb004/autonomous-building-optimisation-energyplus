@@ -1,0 +1,9 @@
+# Phase 5 (dashboard) dependencies — deferred from Phase 0 due to a slow
+# network connection on this machine (large wheels: pyarrow ~33MB via
+# streamlit, pydeck, pandas, matplotlib). Install with:
+#   uv pip install -r requirements-dashboard.txt
+# when Phase 5 starts. See docs/decisions.md.
+streamlit
+pandas
+plotly
+matplotlib

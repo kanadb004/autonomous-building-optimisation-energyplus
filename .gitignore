@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Environment / secrets
+.env
+*.local.yaml
+
+# EnergyPlus outputs
+runs/*
+!runs/demo_final/
+eplusout.*
+eplustbl.*
+eplusmtr.*
+*.eso
+*.mtr
+*.audit
+*.bnd
+*.eio
+*.end
+*.mdd
+*.rdd
+*.edd
+*.dxf
+*.shd
+*.rvaudit
+*.mtd
+sqlite.err
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Streamlit
+.streamlit/secrets.toml
