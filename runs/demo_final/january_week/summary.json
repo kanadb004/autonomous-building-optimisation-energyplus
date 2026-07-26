@@ -7,7 +7,13 @@
     "total_gas_kwh": 644.0181957763637,
     "carbon_kg": 141.97507115494298,
     "comfort_compliance_pct": 100.0,
-    "zone_timesteps": 672
+    "zone_timesteps": 672,
+    "peak_demand_kw": 0.4161849904250021,
+    "peak_demand_at": "1986-01-17T13:30:00",
+    "pmv_mean": -0.05382256091862954,
+    "pmv_mean_abs": 0.2422846845712478,
+    "pmv_within_pct": 100.0,
+    "pct_intervals_above_threshold": 0.0
   },
   "rulebased": {
     "run_id": "demo_final_january_week",
@@ -17,7 +23,13 @@
     "total_gas_kwh": 587.5419485726906,
     "carbon_kg": 131.74541311278148,
     "comfort_compliance_pct": 97.72727272727273,
-    "zone_timesteps": 672
+    "zone_timesteps": 672,
+    "peak_demand_kw": 0.4133724737499363,
+    "peak_demand_at": "1986-01-17T13:30:00",
+    "pmv_mean": -0.07991302129524125,
+    "pmv_mean_abs": 0.2570318311739996,
+    "pmv_within_pct": 97.54545454545455,
+    "pct_intervals_above_threshold": 0.0
   },
   "ai": {
     "run_id": "demo_final_january_week",
@@ -27,7 +39,13 @@
     "total_gas_kwh": 621.111107326274,
     "carbon_kg": 138.12671422999674,
     "comfort_compliance_pct": 95.9090909090909,
-    "zone_timesteps": 672
+    "zone_timesteps": 672,
+    "peak_demand_kw": 0.5762004030991579,
+    "peak_demand_at": "1986-01-16T13:35:00",
+    "pmv_mean": -0.14434326860121108,
+    "pmv_mean_abs": 0.2669104608076653,
+    "pmv_within_pct": 89.36363636363636,
+    "pct_intervals_above_threshold": 1.9345238095238095
   },
   "comparison": {
     "rulebased_vs_baseline": {
@@ -35,14 +53,20 @@
       "energy_saved_pct": 8.003047745494113,
       "carbon_avoided_kg": 10.229658042161503,
       "carbon_avoided_pct": 7.2052494560805505,
-      "comfort_compliance_delta_pct": -2.2727272727272663
+      "comfort_compliance_delta_pct": -2.2727272727272663,
+      "peak_demand_reduction_kw": 0.0028125166750658237,
+      "peak_demand_reduction_pct": 0.6757852252657459,
+      "pmv_within_delta_pct": -2.4545454545454533
     },
     "ai_vs_baseline": {
       "energy_saved_kwh": 21.847823430743915,
       "energy_saved_pct": 3.0944643483735224,
       "carbon_avoided_kg": 3.848356924946245,
       "carbon_avoided_pct": 2.7105863681845817,
-      "comfort_compliance_delta_pct": -4.0909090909090935
+      "comfort_compliance_delta_pct": -4.0909090909090935,
+      "peak_demand_reduction_kw": -0.16001541267415575,
+      "peak_demand_reduction_pct": -38.44814598209088,
+      "pmv_within_delta_pct": -10.63636363636364
     }
   }
 }
