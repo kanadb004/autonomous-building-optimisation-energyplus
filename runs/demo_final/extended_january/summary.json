@@ -1,0 +1,46 @@
+{
+  "baseline": {
+    "run_id": "extended_january",
+    "mode": "baseline",
+    "total_hvac_kwh": 4674.6645793726075,
+    "total_electricity_kwh": 274.27459345402974,
+    "total_gas_kwh": 4400.389985918578,
+    "carbon_kg": 908.9015634889086,
+    "comfort_compliance_pct": 100.0,
+    "zone_timesteps": 2976,
+    "peak_demand_kw": 0.4263654774948678,
+    "peak_demand_at": "1986-01-10T15:00:00",
+    "pmv_mean": -0.13181865772664875,
+    "pmv_mean_abs": 0.25616356075460317,
+    "pmv_within_pct": 99.9407114624506,
+    "pct_intervals_above_threshold": 0.0
+  },
+  "ai": {
+    "run_id": "extended_january",
+    "mode": "mcp",
+    "total_hvac_kwh": 1241.1960474589905,
+    "total_electricity_kwh": 64.30849768644319,
+    "total_gas_kwh": 1176.8875497725473,
+    "carbon_kg": 239.5602979294954,
+    "comfort_compliance_pct": 96.18181818181819,
+    "zone_timesteps": 699,
+    "peak_demand_kw": 0.41690616117968327,
+    "peak_demand_at": "1986-01-05T14:45:00",
+    "pmv_mean": -0.2276895501512899,
+    "pmv_mean_abs": 0.3080115081682583,
+    "pmv_within_pct": 89.63636363636364,
+    "pct_intervals_above_threshold": 0.0
+  },
+  "comparison": {
+    "ai_vs_baseline": {
+      "energy_saved_kwh": 3433.468531913617,
+      "energy_saved_pct": 73.44844691240772,
+      "carbon_avoided_kg": 669.3412655594132,
+      "carbon_avoided_pct": 73.64287756201898,
+      "comfort_compliance_delta_pct": -3.818181818181813,
+      "peak_demand_reduction_kw": 0.00945931631518454,
+      "peak_demand_reduction_pct": 2.2185933933402016,
+      "pmv_within_delta_pct": -10.304347826086953
+    }
+  }
+}
