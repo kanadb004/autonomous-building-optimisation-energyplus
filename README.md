@@ -5,12 +5,29 @@ an open-source LLM served by Ollama makes HVAC setpoint decisions through an
 MCP server, deterministic guardrails validate every decision, and a
 Streamlit dashboard compares AI-controlled operation against the baseline.
 
-**Demo video:** [`runs/demo_video/kanad-bhattacharya_honeywell.mov`](runs/demo_video/kanad-bhattacharya_honeywell.mov)
+**Demo video:** [`demo_video/kanad-bhattacharya_honeywell.mov`](demo_video/kanad-bhattacharya_honeywell.mov)
 (also on [Google Drive](https://drive.google.com/file/d/1iaASAQGhxvRtMleT-ByD2kZ1FKTcWOGY/view?usp=sharing)).
 
 See [`docs/architecture.md`](docs/architecture.md) for how the pieces fit
 together and [`docs/decisions.md`](docs/decisions.md) for the design
 decisions and why they were made.
+
+## Deliverables
+
+1. **Source code** (EnergyPlus API wrapper, LLM agent orchestration, MCP
+   communication bus): [`src/abms/`](src/abms/), plus the
+   [dashboard](dashboard/app.py).
+2. **Building models** (baseline `.idf` and the runtime-modified versions):
+   [`models/`](models/) for the baseline building file, and
+   [`building_models/`](building_models/) for the per-run generated
+   variants.
+3. **Quantitative savings dashboard**: [`dashboard/app.py`](dashboard/app.py)
+   (run with `streamlit run dashboard/app.py`), backed by the data export in
+   [`runs/demo_final/`](runs/demo_final/). See [Results](#results-runsdemo_final-ai-vs-baseline)
+   below for the headline percentages.
+4. **System architecture document**: [`docs/architecture.md`](docs/architecture.md).
+5. **PoC demonstration video**: [`demo_video/`](demo_video/), also on
+   [Google Drive](https://drive.google.com/file/d/1iaASAQGhxvRtMleT-ByD2kZ1FKTcWOGY/view?usp=sharing).
 
 ## Setup (macOS)
 
